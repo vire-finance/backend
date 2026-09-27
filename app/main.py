@@ -1,12 +1,10 @@
 from fastapi import FastAPI
-from app.core.database import engine
-from app.shared.base import Base
-from app.api.auth import model
 
-Base.metadata.create_all(bind=engine)
+from app.api.pocket.router import router as pocket_router
+from app.api.card.router import router as card_router
+
 
 app = FastAPI()
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello, FastAPI!"}
+app.include_router(pocket_router)
+app.include_router(card_router)
