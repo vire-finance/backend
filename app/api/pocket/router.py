@@ -9,7 +9,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.api.auth.dependencies import (get_current_user)
+from app.api.auth.dependencies import get_active_user
 from app.api.pocket.service import PocketService
 from app.api.pocket.schema import PocketCreate, PocketUpdate, PocketBudgetUpdate, PocketListItem, PocketDetail, PocketResponse, PocketAccessCreate, PocketAccessResponse
 
@@ -20,7 +20,7 @@ def get_service(db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[PocketListItem])
 def list_pockets(
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.list_pockets(current_user.id)
@@ -28,7 +28,7 @@ def list_pockets(
 @router.post("", response_model=PocketResponse, status_code=status.HTTP_201_CREATED)
 def create_pocket(
     payload: PocketCreate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.create_pocket(owner_id=current_user.id, payload=payload)
@@ -36,7 +36,7 @@ def create_pocket(
 @router.get("/{pocket_id}", response_model=PocketDetail)
 def get_pocket(
     pocket_id: uuid.UUID,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.get_detail(pocket_id=pocket_id, user_id=current_user.id)
@@ -45,7 +45,7 @@ def get_pocket(
 def update_pocket(
     pocket_id: uuid.UUID,
     payload: PocketUpdate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.update_pocket(
@@ -58,7 +58,7 @@ def update_pocket(
 def update_budget(
     pocket_id: uuid.UUID,
     payload: PocketBudgetUpdate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.update_budget(
@@ -71,7 +71,7 @@ def update_budget(
 def grant_access(
     pocket_id: uuid.UUID,
     payload: PocketAccessCreate,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     return service.grant_access(
@@ -84,7 +84,7 @@ def grant_access(
 def revoke_access(
     pocket_id: uuid.UUID,
     employee_id: uuid.UUID,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_active_user),
     service: PocketService = Depends(get_service)
 ):
     service.revoke_access(
