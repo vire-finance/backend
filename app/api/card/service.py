@@ -1,175 +1,205 @@
-import uuid
-
-from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+import secrets
+from datetime import timezone
 
 from app.api.card.model import Card, CardAccess
-
 from app.api.card.repository import CardRepository
-from app.api.pocket.repository import PocketRepository
-
-from app.api.card.schema import CardCreate, CardUpdate
+from app.api.transaction.repository import TransactionRepository
+from app.shared.enums import CardStatus
+from app.shared.utils import ensure, fields, limit_data, local_time, money, month_bounds, now_utc, previous_month
 
 class CardService:
-    def __init__(self, db: Session):
-        self.db = db
-        self.card_repository = CardRepository(db)
-        self.pocket_repository = PocketRepository(db)
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.repo = CardRepository(ctx.db)
+        self.transactions = TransactionRepository(ctx.db)
 
-    def _get_pocket(self, pocket_id: uuid.UUID):
-        pocket = self.pocket_repository.get_by_id(pocket_id)
-        if not pocket:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Pocket not found."
+    def view(self, row, detail=False):
+        pocket = self.ctx.raw_pocket(row.pocket_id)
+        result = {
+            **fields(
+                row, "id", "pocket_id", "name", "category",
+                "theme", "status", "network", "last_four_digits",
+                "balance", "expiry_month", "expiry_year",
+            ),
+            "pocket_name": pocket.name,
+            "masked_number": f"SIM •••• •••• {row.last_four_digits}",
+            "cvv": "***",
+            "is_simulated": True,
+            **limit_data(
+                row.monthly_limit,
+                self.transactions.spent(card_id=row.id),
+            ),
+        }
+
+        if detail:
+            result["simulated_card_number"] = (
+                f"SIM-{row.id.hex[:12].upper()}-{row.last_four_digits}"
             )
-        return pocket
+            employees = []
 
-    def _get_card(self, card_id: uuid.UUID) -> Card:
-        card = self.card_repository.get_by_id(card_id)
-        if not card:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card not found."
-            )
-        return card
+            for employee in self.repo.employees(self.ctx.owner_id):
+                inherited = self.ctx.can_pocket(pocket, employee)
+                direct = self.repo.access(row.id, employee.id) is not None
 
-    def _ensure_owner(self, pocket, user_id: uuid.UUID) -> None:
-        if pocket.owner_id != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the Pocket owner can perform this action."
-            )
+                if inherited or direct:
+                    employees.append({
+                        "id": employee.id,
+                        "name": employee.username,
+                        "direct_access": direct,
+                        "inherited_from_pocket": inherited,
+                    })
 
-    def create_card(self, pocket_id: uuid.UUID, owner_id: uuid.UUID, payload: CardCreate) -> Card:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        card = Card(
-            pocket_id=pocket_id,
-            name=payload.name,
-            last_four_digits=payload.last_four_digits,
-            network=payload.network,
-            expiry_month=payload.expiry_month,
-            expiry_year=payload.expiry_year,
-            balance=payload.balance,
-            theme=payload.theme
+            result["employees"] = employees
+
+        return result
+
+    def list(self, pocket_id=None, status=None, category=None):
+        if pocket_id:
+            self.ctx.raw_pocket(pocket_id)
+
+        return [
+            self.view(row)
+            for row in self.repo.for_owner(self.ctx.owner_id, pocket_id)
+            if self.ctx.can_card(row)
+            and (status is None or row.status == status)
+            and (category is None or row.category == category)
+        ]
+
+    def detail(self, card_id):
+        return self.view(self.ctx.card(card_id), detail=True)
+
+    def create(self, payload):
+        self.ctx.owner_only()
+        pocket = self.ctx.raw_pocket(payload.pocket_id)
+
+        ensure(
+            payload.monthly_limit <= pocket.remaining_amount,
+            "Spending limit melebihi remaining Pocket.",
+            409,
         )
-        self.card_repository.create(card)
-        self.db.commit()
-        self.db.refresh(card)
-        return card
-
-    def list_cards(self, pocket_id: uuid.UUID, user_id: uuid.UUID) -> list[Card]:
-        pocket = self._get_pocket(pocket_id)
-        if pocket.owner_id == user_id:
-            return self.card_repository.list_by_pocket(pocket_id)
-        if self.pocket_repository.has_access(pocket_id, user_id):
-            return self.card_repository.list_by_pocket(pocket_id)
-        cards = self.card_repository.list_accessible_by_user(pocket_id, user_id)
-        if not cards:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this Pocket."
-            )
-        return cards
-    
-    def update_card(self, pocket_id: uuid.UUID, card_id: uuid.UUID, owner_id: uuid.UUID, payload: CardUpdate) -> Card:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        card = self._get_card(card_id)
-        if card.pocket_id != pocket_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card not found in this Pocket."
-            )
-        data = payload.model_dump(exclude_unset=True)
-        for field, value in data.items():
-            setattr(card, field, value)
-        self.db.commit()
-        self.db.refresh(card)
-        return card
-
-    def grant_access(self, pocket_id: uuid.UUID, card_id: uuid.UUID, owner_id: uuid.UUID, employee_id: uuid.UUID) -> CardAccess:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        if self.pocket_repository.has_access(pocket_id, employee_id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Employee already has access to this Pocket."
-            )
-        card = self._get_card(card_id)
-        if card.pocket_id != pocket_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card not found in this Pocket."
-            )
-        existing_access = (
-            self.card_repository.get_access(
-                card_id,
-                employee_id
-            )
-        )
-        if existing_access:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Employee already has access to this Card."
-            )
-        access = CardAccess(
-            card_id=card_id,
-            employee_id=employee_id
-        )
-        self.card_repository.grant_access(access)
-        self.db.commit()
-        self.db.refresh(access)
-        return access
-
-    def revoke_access(self, pocket_id: uuid.UUID, card_id: uuid.UUID, owner_id: uuid.UUID, employee_id: uuid.UUID) -> None:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        card = self._get_card(card_id)
-        if card.pocket_id != pocket_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card not found in this Pocket."
-            )
-        access = self.card_repository.get_access(card_id, employee_id)
-        if not access:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card access not found."
-            )
-        self.card_repository.revoke_access(access)
-        self.db.commit()
-
-    def _ensure_card_access(self, card: Card, user_id: uuid.UUID) -> None:
-        pocket = self._get_pocket(card.pocket_id)
-        # Owner Pocket
-        if pocket.owner_id == user_id:
-            return
-
-        # Employee punya akses ke seluruh Pocket
-        has_pocket_access = self.pocket_repository.has_access(pocket.id, user_id)
-
-        if has_pocket_access:
-            return
-
-        # Employee punya akses langsung ke Card tertentu
-        has_card_access = self.card_repository.has_access(card.id, user_id)
-
-        if has_card_access:
-            return
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this Card."
+        ensure(
+            payload.initial_balance <= pocket.remaining_amount,
+            "Initial balance melebihi remaining Pocket.",
+            409,
         )
 
-    def get_card(self, pocket_id: uuid.UUID, card_id: uuid.UUID, user_id: uuid.UUID) -> Card:
-        card = self._get_card(card_id)
-        if card.pocket_id != pocket_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Card not found in this Pocket."
+        now = local_time(now_utc())
+
+        row = self.repo.add(
+            Card(
+                pocket_id=pocket.id,
+                name=payload.name,
+                category=payload.category,
+                theme=payload.theme,
+                balance=payload.initial_balance,
+                spent=0,
+                monthly_limit=payload.monthly_limit,
+                status=CardStatus.ACTIVE,
+                network="VISA",
+                last_four_digits=f"{secrets.randbelow(10000):04d}",
+                expiry_month=now.month,
+                expiry_year=now.year + 3,
             )
-        self._ensure_card_access(card, user_id)
-        return card
+        )
+        return self.ctx.commit(self.view(row, detail=True))
+
+    def update(self, card_id, payload):
+        self.ctx.owner_only()
+        row = self.ctx.raw_card(card_id)
+        pocket = self.ctx.raw_pocket(row.pocket_id)
+        changes = payload.model_dump(exclude_unset=True)
+
+        if "balance" in changes:
+            ensure(
+                changes["balance"] <= pocket.remaining_amount,
+                "Saldo Card melebihi remaining Pocket.",
+                409,
+            )
+
+        if "monthly_limit" in changes:
+            spent = self.transactions.spent(card_id=row.id)
+            ensure(
+                changes["monthly_limit"] >= spent,
+                "Limit tidak boleh lebih kecil dari spending bulan ini.",
+                409,
+            )
+            ensure(
+                changes["monthly_limit"] - spent <= pocket.remaining_amount,
+                "Sisa limit baru melebihi remaining Pocket.",
+                409,
+            )
+
+        for key, value in changes.items():
+            setattr(row, key, value)
+
+        self.ctx.db.flush()
+        return self.ctx.commit(self.view(row, detail=True))
+
+    def set_status(self, card_id, payload):
+        self.ctx.owner_only()
+        row = self.ctx.raw_card(card_id)
+        row.status = payload.status
+        return self.ctx.commit(self.view(row, detail=True))
+
+    def access(self, card_id, employee_id, grant):
+        self.ctx.owner_only()
+        row = self.ctx.raw_card(card_id)
+        employee = self.ctx.employee(employee_id)
+        existing = self.repo.access(card_id, employee_id)
+
+        if grant and existing is None:
+            self.ctx.db.add(
+                CardAccess(card_id=card_id, employee_id=employee_id)
+            )
+        elif not grant and existing is not None:
+            self.ctx.db.delete(existing)
+
+        inherited = self.ctx.can_pocket(
+            self.ctx.raw_pocket(row.pocket_id), employee
+        )
+
+        return self.ctx.commit({
+            "direct_access": grant,
+            "inherited_from_pocket": inherited,
+            "effective_access": grant or inherited,
+        })
+
+    def recommendation(self, pocket_id, category=None):
+        self.ctx.owner_only()
+        pocket = self.ctx.raw_pocket(pocket_id)
+
+        end, _ = month_bounds()
+        start = local_time(end)
+
+        for _ in range(3):
+            start = previous_month(start)
+
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+
+        total, count = self.transactions.historical_spending(
+            pocket_id, start, end, category
+        )
+
+        if total:
+            recommendation = max(1, total // (3 * max(1, count)))
+            method = "Rata-rata spending per Card per bulan selama tiga bulan kalender terakhir."
+        else:
+            recommendation = max(1, money(pocket.remaining_amount) // 5)
+            method = "Histori belum cukup; menggunakan 20% remaining Pocket."
+
+        monthly_remaining = max(
+            0,
+            money(pocket.monthly_limit) - self.transactions.spent(pocket_id=pocket_id),
+        )
+
+        return {
+            "recommended_limit": min(
+                recommendation,
+                money(pocket.remaining_amount),
+                monthly_remaining,
+            ),
+            "method": "HEURISTIC",
+            "explanation": method,
+            "category": category,
+            "is_binding": False,
+        }

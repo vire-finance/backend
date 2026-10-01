@@ -1,162 +1,185 @@
-import uuid
+import csv
+import io
+from collections import Counter
 
-from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
-
+from app.api.card.service import CardService
 from app.api.pocket.model import Pocket, PocketAccess
 from app.api.pocket.repository import PocketRepository
-from app.api.card.repository import CardRepository
-from app.api.pocket.schema import PocketCreate, PocketUpdate,PocketBudgetUpdate, PocketListItem, PocketDetail
+from app.api.transaction.repository import TransactionRepository
+from app.shared.utils import ensure, fields, iso, limit_data, local_time, money, month_bounds
 
 class PocketService:
-    def __init__(self, db: Session):
-        self.db = db
-        self.pocket_repository = PocketRepository(db)
-        self.card_repository = CardRepository(db)
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.repo = PocketRepository(ctx.db)
+        self.transactions = TransactionRepository(ctx.db)
 
-    # Helper
+    def view(self, row, detail=False):
+        start, end = month_bounds()
+        result = {
+            **fields(
+                row, "id", "owner_id", "name", "theme",
+                "allocated_amount", "remaining_amount",
+            ),
+            "card_count": self.repo.card_count(row.id),
+            "period_start": iso(start),
+            "period_end": iso(end),
+            **limit_data(
+                row.monthly_limit,
+                self.transactions.spent(pocket_id=row.id),
+            ),
+        }
 
-    def _get_pocket(self, pocket_id: uuid.UUID) -> Pocket:
-        pocket = (self.pocket_repository.get_by_id(pocket_id))
-        if not pocket:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Pocket not found."
-            )
-        return pocket
+        if detail:
+            result["cards"] = CardService(self.ctx).list(pocket_id=row.id)
 
-    def _ensure_owner(self, pocket: Pocket, user_id: uuid.UUID) -> None:
-        if pocket.owner_id != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Only the Pocket owner can perform this action."
-                )
-            )
+        return result
 
-    def _ensure_access(self, pocket: Pocket, user_id: uuid.UUID) -> None:
-        # Owner selalu punya akses
-        if pocket.owner_id == user_id:
-            return
-
-        # Employee harus terdaftar di PocketAccess
-        has_access = (self.pocket_repository.has_access(pocket.id, user_id))
-
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "You do not have access to this Pocket."
-                )
-            )
-
-    # Pocket
-    
-    def list_pockets(self, user_id: uuid.UUID) -> list[PocketListItem]:
-        rows = (self.pocket_repository.list_accessible(user_id))
+    def list(self):
         return [
-            PocketListItem(
-                id=pocket.id,
-                owner_id=pocket.owner_id,
-                name=pocket.name,
-                allocated_amount=(pocket.allocated_amount),
-                remaining_amount=(pocket.remaining_amount),
-                theme=pocket.theme,
-                card_count=card_count
-            )
-            for pocket, card_count in rows
+            self.view(row)
+            for row in self.repo.for_owner(self.ctx.owner_id)
+            if self.ctx.can_pocket(row)
         ]
 
-    def create_pocket(self, owner_id: uuid.UUID, payload: PocketCreate) -> Pocket:
-        pocket = Pocket(
-            owner_id=owner_id,
-            name=payload.name,
-            allocated_amount=(payload.allocated_amount),
-            # Ketika pocket baru dibuat, maka belum ada pengeluaran
-            remaining_amount=(payload.allocated_amount),
-            theme=payload.theme
-        )
-        self.pocket_repository.create(pocket)
-        self.db.commit()
-        self.db.refresh(pocket)
-        return pocket
+    def detail(self, pocket_id):
+        return self.view(self.ctx.pocket(pocket_id), detail=True)
 
-    def get_detail(self, pocket_id: uuid.UUID, user_id: uuid.UUID) -> PocketDetail:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_access(pocket, user_id)
-        cards = self.card_repository.list_by_pocket(pocket.id)
-        return PocketDetail(
-            id=pocket.id,
-            owner_id=pocket.owner_id,
-            name=pocket.name,
-            allocated_amount=(pocket.allocated_amount),
-            remaining_amount=(pocket.remaining_amount),
-            theme=pocket.theme,
-            cards=cards
-        )
-
-    def update_pocket(self, pocket_id: uuid.UUID, owner_id: uuid.UUID, payload: PocketUpdate) -> Pocket:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        data = payload.model_dump(exclude_unset=True)
-        for field, value in data.items():
-            setattr(pocket, field, value)
-        self.db.commit()
-        self.db.refresh(pocket)
-        return pocket
-
-    def update_budget(self, pocket_id: uuid.UUID, owner_id: uuid.UUID, payload: PocketBudgetUpdate) -> Pocket:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        spent_amount = pocket.allocated_amount - pocket.remaining_amount
-        new_budget = payload.allocated_amount
-        # Tidak boleh menurunkan budget hingga di bawah uang yang sudah digunakan.
-        if new_budget < spent_amount:
-            raise HTTPException(
-                status_code=(
-                    status.HTTP_400_BAD_REQUEST
+    def create(self, payload):
+        self.ctx.owner_only()
+        row = self.repo.add(
+            Pocket(
+                owner_id=self.ctx.owner_id,
+                name=payload.name,
+                theme=payload.theme,
+                allocated_amount=payload.allocated_amount,
+                remaining_amount=payload.allocated_amount,
+                monthly_limit=(
+                    payload.monthly_limit
+                    if payload.monthly_limit is not None
+                    else payload.allocated_amount
                 ),
-                detail=(
-                    "Budget cannot be lower than the amount already spent."
+            )
+        )
+        return self.ctx.commit(self.view(row))
+
+    def update(self, pocket_id, payload):
+        self.ctx.owner_only()
+        row = self.ctx.raw_pocket(pocket_id)
+        changes = payload.model_dump(exclude_unset=True)
+
+        if "allocated_amount" in changes:
+            used = row.allocated_amount - row.remaining_amount
+            ensure(
+                changes["allocated_amount"] >= used,
+                "Budget baru lebih kecil dari dana yang sudah digunakan.",
+                409,
+            )
+            row.remaining_amount = changes["allocated_amount"] - used
+
+        if "monthly_limit" in changes:
+            ensure(
+                changes["monthly_limit"]
+                >= self.transactions.spent(pocket_id=row.id),
+                "Limit tidak boleh di bawah spending bulan ini.",
+                409,
+            )
+
+        for key, value in changes.items():
+            setattr(row, key, value)
+
+        self.ctx.db.flush()
+        return self.ctx.commit(self.view(row))
+
+    def employees(self, pocket_id=None):
+        self.ctx.owner_only()
+        if pocket_id:
+            self.ctx.raw_pocket(pocket_id)
+
+        return [
+            {"id": row.id, "name": row.username}
+            for row in self.repo.employees(self.ctx.owner_id, pocket_id)
+        ]
+
+    def access(self, pocket_id, employee_id, grant):
+        self.ctx.owner_only()
+        self.ctx.raw_pocket(pocket_id)
+        self.ctx.employee(employee_id)
+        existing = self.repo.access(pocket_id, employee_id)
+
+        if grant and existing is None:
+            self.ctx.db.add(
+                PocketAccess(
+                    pocket_id=pocket_id,
+                    employee_id=employee_id,
                 )
             )
-        pocket.allocated_amount = new_budget
-        pocket.remaining_amount = new_budget - spent_amount
-        self.db.commit()
-        self.db.refresh(pocket)
-        return pocket
+        elif not grant and existing is not None:
+            self.ctx.db.delete(existing)
 
-    # Pocket Access
-    
-    def grant_access(self, pocket_id: uuid.UUID, owner_id: uuid.UUID, employee_id: uuid.UUID) -> PocketAccess:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        # owner tidak perlu diberikan akses karena sudah memiliki akses penuh
-        if employee_id == pocket.owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Pocket owner already has access to this Pocket."
-            )
-        existing_access = self.pocket_repository.get_access(pocket_id, employee_id)
-        if existing_access:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Employee already has access to this Pocket."
-            )
-        access = PocketAccess(pocket_id=pocket_id, employee_id=employee_id)
-        self.pocket_repository.grant_access(access)
-        self.db.commit()
-        self.db.refresh(access)
-        return access
+        return self.ctx.commit({
+            "pocket_access": grant,
+            "note": (
+                "Akses Card langsung tetap berlaku jika sebelumnya diberikan."
+                if not grant else None
+            ),
+        })
 
-    def revoke_access(self, pocket_id: uuid.UUID, owner_id: uuid.UUID, employee_id: uuid.UUID) -> None:
-        pocket = self._get_pocket(pocket_id)
-        self._ensure_owner(pocket, owner_id)
-        access = self.pocket_repository.get_access(pocket_id, employee_id)
-        if not access:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee does not have access to this Pocket."
-            )
-        self.pocket_repository.revoke_access(access)
-        self.db.commit()
+    def analysis(self, pocket_id):
+        self.ctx.owner_only()
+        pocket = self.ctx.raw_pocket(pocket_id)
+        rows = self.transactions.history(self.ctx.owner_id, pocket_id)
+
+        monthly = Counter()
+        by_card = Counter()
+        counts = Counter(row.status for row in rows)
+
+        for row in rows:
+            if row.status != "APPROVED":
+                continue
+            month = local_time(row.processed_at).strftime("%Y-%m")
+            monthly[month] += money(row.amount)
+            by_card[str(row.card_id)] += money(row.amount)
+
+        return {
+            "pocket": self.view(pocket),
+            "monthly_spending": [
+                {"month": month, "amount": amount}
+                for month, amount in sorted(monthly.items())
+            ],
+            "spending_by_card": [
+                {"card_id": key, "amount": amount}
+                for key, amount in by_card.items()
+            ],
+            "transaction_status_counts": dict(counts),
+            "timezone": "Asia/Jakarta",
+        }
+
+    def report(self, pocket_id):
+        self.ctx.owner_only()
+        self.ctx.raw_pocket(pocket_id)
+        rows = self.transactions.history(self.ctx.owner_id, pocket_id)
+
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow([
+            "transaction_id", "created_at_utc", "processed_at_utc",
+            "card_id", "fund_request_id", "amount_idr",
+            "status", "description", "failure_reason",
+        ])
+
+        def safe(value):
+            value = "" if value is None else str(value)
+            if value.lstrip().startswith(("=", "+", "-", "@")):
+                return "'" + value
+            return value
+
+        for row in rows:
+            writer.writerow([
+                row.id, iso(row.created_at), iso(row.processed_at),
+                row.card_id, row.fund_request_id or "",
+                money(row.amount), row.status,
+                safe(row.description), safe(row.failure_reason),
+            ])
+
+        return buffer.getvalue().encode("utf-8-sig")
