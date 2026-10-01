@@ -1,61 +1,45 @@
-import uuid
+from sqlalchemy import func, select
 
-from sqlalchemy import select, or_, func
-from sqlalchemy.orm import Session
-
-from app.api.pocket.model import Pocket, PocketAccess
+from app.api.auth.model import User
 from app.api.card.model import Card
+from app.api.pocket.model import Pocket, PocketAccess
+from app.shared.enums import UserRole
+from app.shared.repository import Repository
 
-class PocketRepository:
-    def __init__(self, db: Session):
-        self.db = db
+class PocketRepository(Repository):
+    model = Pocket
 
-    def get_by_id(self, pocket_id: uuid.UUID) -> Pocket | None:
+    def for_owner(self, owner_id):
+        return self.db.scalars(
+            select(Pocket)
+            .where(Pocket.owner_id == owner_id)
+            .order_by(Pocket.created_at, Pocket.id)
+        ).all()
+
+    def card_count(self, pocket_id):
         return self.db.scalar(
-            select(Pocket).where(Pocket.id == pocket_id)
-        )
+            select(func.count(Card.id)).where(Card.pocket_id == pocket_id)
+        ) or 0
 
-    def list_accessible(self, user_id: uuid.UUID):
-        card_count = (
-            select(func.count(Card.id))
-            .where(Card.pocket_id == Pocket.id)
-            .correlate(Pocket).scalar_subquery()
-        )
-
-        statement = (
-            select(Pocket, card_count.label("card_count"))
-            .outerjoin(PocketAccess, PocketAccess.pocket_id == Pocket.id)
-            .where(
-                or_(Pocket.owner_id == user_id, PocketAccess.employee_id == user_id)
-            ).distinct()
-        )
-
-        return self.db.execute(statement).all()
-
-    def create(self, pocket: Pocket) -> Pocket:
-        self.db.add(pocket)
-        self.db.flush()
-        return pocket
-
-    def get_access(self, pocket_id: uuid.UUID, employee_id: uuid.UUID) -> PocketAccess | None:
+    def access(self, pocket_id, employee_id):
         return self.db.scalar(
-            select(PocketAccess)
-            .where(
+            select(PocketAccess).where(
                 PocketAccess.pocket_id == pocket_id,
-                PocketAccess.employee_id == employee_id
+                PocketAccess.employee_id == employee_id,
             )
         )
 
-    def has_access(self, pocket_id: uuid.UUID, employee_id: uuid.UUID) -> bool:
-        return self.get_access(pocket_id, employee_id) is not None
+    def employees(self, owner_id, pocket_id=None):
+        statement = select(User).where(
+            User.employer_id == owner_id,
+            User.role == UserRole.EMPLOYEE,
+        )
 
-    def grant_access(self, access: PocketAccess) -> PocketAccess:
-        self.db.add(access)
-        self.db.flush()
-        return access
+        if pocket_id is not None:
+            statement = statement.join(
+                PocketAccess, PocketAccess.employee_id == User.id
+            ).where(PocketAccess.pocket_id == pocket_id)
 
-    def revoke_access(self, access: PocketAccess) -> None:
-        self.db.delete(access)
-
-    def get_by_id_for_update(self, pocket_id: uuid.UUID) -> Pocket | None:
-        return self.db.scalar(select(Pocket).where(Pocket.id == pocket_id).with_for_update())
+        return self.db.scalars(
+            statement.order_by(User.username, User.id)
+        ).all()
