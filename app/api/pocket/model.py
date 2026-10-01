@@ -36,6 +36,11 @@ class Pocket(Base, UUIDPrimaryKey, Timestamp):
         nullable=False
     )
 
+    monthly_limit: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2),
+        nullable=False
+    )
+
     theme: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True
@@ -64,6 +69,14 @@ class Pocket(Base, UUIDPrimaryKey, Timestamp):
         CheckConstraint(
             "remaining_amount <= allocated_amount",
             name="ck_pocket_remaining_not_exceed_allocated"
+        ),
+        CheckConstraint(
+            "remaining_amount <= allocated_amount",
+            name="ck_pocket_remaining_not_exceed_allocated"
+        ),
+        CheckConstraint(
+            "monthly_limit > 0",
+            name="ck_pocket_monthly_limit_positive"
         ),
     )
 

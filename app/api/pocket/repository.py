@@ -56,3 +56,6 @@ class PocketRepository:
 
     def revoke_access(self, access: PocketAccess) -> None:
         self.db.delete(access)
+
+    def get_by_id_for_update(self, pocket_id: uuid.UUID) -> Pocket | None:
+        return self.db.scalar(select(Pocket).where(Pocket.id == pocket_id).with_for_update())
