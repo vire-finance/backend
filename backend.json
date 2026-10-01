@@ -1,0 +1,2348 @@
+{
+    "info": {
+        "name": "VIRE - Flow lengkap tanpa OCR",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        "description": "Jalankan berurutan mulai 00, satu iterasi. Membuat akun dan data uji baru. Status 401/403/409/422 pada nama request adalah hasil yang diharapkan. Tidak melakukan reset atau menghapus database."
+    },
+    "auth": {
+        "type": "noauth"
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://127.0.0.1:8000",
+            "type": "string"
+        }
+    ],
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    "if (pm.info.requestName.startsWith('00 ')) {",
+                    "  pm.collectionVariables.set('run_tag', Date.now().toString() + '-' + pm.variables.replaceIn('{{$guid}}').slice(0,8));",
+                    "  ['owner_setup','owner_token','employee_setup','employee_token','employee_id','invite_code','pocket_id','card_id','card_b_id','request_id','reject_request_id','approval_tx_id','card_tx_id','invoice_id','owner_notification_id','payment_id','small_pocket_id','small_card_id','race_pocket_id','race_card_id'].forEach(k => pm.collectionVariables.unset(k));",
+                    "  ['approval_key','card_payment_key'].forEach(k => pm.collectionVariables.set(k, pm.variables.replaceIn('{{$guid}}')));",
+                    "}",
+                    "pm.collectionVariables.set('needed_by', new Date(Date.now()+7*24*60*60*1000).toISOString());",
+                    "pm.collectionVariables.set('fresh_key', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    "const match = pm.info.requestName.match(/\\[(\\d{3})\\]$/);",
+                    "if (match) {",
+                    "  const expected = Number(match[1]);",
+                    "  pm.test('HTTP sesuai: ' + expected, () => pm.response.to.have.status(expected));",
+                    "  if (pm.response.code !== expected) {",
+                    "    console.error('Berhenti pada: ' + pm.info.requestName);",
+                    "    if (pm.execution && pm.execution.setNextRequest) pm.execution.setNextRequest(null);",
+                    "  }",
+                    "}"
+                ]
+            }
+        }
+    ],
+    "item": [
+        {
+            "name": "00 Health dan mulai run baru [200]",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/health"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Server aktif', () => pm.expect(pm.response.json().status).to.eql('ok'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "01 Daftar Owner [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/register",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"email\":\"owner.{{run_tag}}@example.com\",\"username\":\"owner_vire\",\"phone_number\":\"081234567890\",\"password\":\"VireTest123!\",\"confirm_password\":\"VireTest123!\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('owner_setup', pm.response.json().setup_token);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "02 Pilih role Owner dan simpan undangan [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_setup}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/role/owner",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"fund_account_type\":\"BANK\",\"employees_managed\":10}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.collectionVariables.set('invite_code', pm.response.json().code);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "03 Login Owner [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/login",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"email\":\"owner.{{run_tag}}@example.com\",\"password\":\"VireTest123!\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.collectionVariables.set('owner_token', pm.response.json().access_token);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "04 Daftar Employee [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/register",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"email\":\"employee.{{run_tag}}@example.com\",\"username\":\"employee_vire\",\"phone_number\":\"081234567891\",\"password\":\"VireTest123!\",\"confirm_password\":\"VireTest123!\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('employee_setup', pm.response.json().setup_token);",
+                            "pm.collectionVariables.set('employee_id', pm.response.json().user.id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "05 Employee bergabung lewat undangan [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_setup}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/role/employee",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"invitation_code\":\"{{invite_code}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Role Employee', () => pm.expect(pm.response.json().role).to.eql('EMPLOYEE'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "06 Login Employee [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/auth/login",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"email\":\"employee.{{run_tag}}@example.com\",\"password\":\"VireTest123!\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.collectionVariables.set('employee_token', pm.response.json().access_token);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "07 Tanpa token akses ditolak [401]",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/pockets"
+            }
+        },
+        {
+            "name": "08 Owner membuat Pocket Rp10 juta [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"name\":\"Kantor Cabang 1\",\"allocated_amount\":10000000,\"monthly_limit\":8000000,\"theme\":\"BLUE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('pocket_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "09 Owner membuat Card A [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"name\":\"Belanja Kantor\",\"category\":\"Operational\",\"theme\":\"PURPLE\",\"initial_balance\":3000000,\"monthly_limit\":2000000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('card_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "10 Employee belum melihat Pocket [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Daftar Pocket kosong', () => pm.expect(pm.response.json()).to.eql([]));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "11 Employee membuka Pocket tanpa akses [403]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            }
+        },
+        {
+            "name": "12 Employee tidak boleh membuat Pocket [403]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"name\":\"Tidak diizinkan\",\"allocated_amount\":10000000,\"monthly_limit\":8000000,\"theme\":\"BLUE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "13 Request tanpa akses Pocket ditolak [403]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"explanation\":\"Pembelian perlengkapan kantor\",\"request_type\":\"PURCHASE\",\"party_name\":\"Toko ATK\",\"total_amount\":250000,\"needed_by\":\"{{needed_by}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "14 Owner memberi akses langsung Card A [200]",
+            "request": {
+                "method": "PUT",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}/employees/{{employee_id}}"
+            }
+        },
+        {
+            "name": "15 Employee dapat membuka Card A [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}"
+            }
+        },
+        {
+            "name": "16 Akses Card tidak membuka Pocket [403]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            }
+        },
+        {
+            "name": "17 Akses Card tidak membolehkan Fund Request [403]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"explanation\":\"Pembelian perlengkapan kantor\",\"request_type\":\"PURCHASE\",\"party_name\":\"Toko ATK\",\"total_amount\":250000,\"needed_by\":\"{{needed_by}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "18 Owner memberi akses Pocket [200]",
+            "request": {
+                "method": "PUT",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}/employees/{{employee_id}}"
+            }
+        },
+        {
+            "name": "19 Employee sekarang dapat membuka Pocket [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            }
+        },
+        {
+            "name": "20 Owner membuat Card B [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"name\":\"Operasional Cabang\",\"category\":\"Operational\",\"theme\":\"PURPLE\",\"initial_balance\":2000000,\"monthly_limit\":1000000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('card_b_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "21 Akses Card B otomatis dari Pocket [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_b_id}}"
+            }
+        },
+        {
+            "name": "22 Pocket berisi dua Card [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Dua Card', () => pm.expect(pm.response.json().card_count).to.eql(2));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "23 Employee membuat request Rp250 ribu [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"explanation\":\"Pembelian perlengkapan kantor\",\"request_type\":\"PURCHASE\",\"party_name\":\"Toko ATK\",\"total_amount\":250000,\"needed_by\":\"{{needed_by}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('request_id', pm.response.json().id);",
+                            "pm.test('Request masih DRAFT', () => pm.expect(pm.response.json().status).to.eql('DRAFT'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "23A Employee upload nota untuk OCR [202]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/ocr/documents",
+                "body": {
+                    "mode": "formdata",
+                    "formdata": [
+                        {
+                            "key": "file",
+                            "type": "file",
+                            "src": []
+                        }
+                    ]
+                }
+            },
+            "event": [
+                {
+                    "listen": "prerequest",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "pm.collectionVariables.unset('ocr_document_id');",
+                            "pm.collectionVariables.unset('ocr_status');",
+                            "pm.collectionVariables.set('ocr_poll_count', '0');"
+                        ]
+                    }
+                },
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "pm.test('Upload diterima', () => pm.response.to.have.status(202));",
+                            "if (pm.response.code === 202) {",
+                            "  const body = pm.response.json();",
+                            "  pm.collectionVariables.set('ocr_document_id', body.document_id);",
+                            "  pm.collectionVariables.set('ocr_status', body.status);",
+                            "} else {",
+                            "  console.error('Upload gagal:', pm.response.text());",
+                            "  pm.execution.setNextRequest(null);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "23B Employee tunggu OCR selesai [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/ocr/documents/{{ocr_document_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "pm.test('Status OCR dapat dibaca', () => pm.response.to.have.status(200));",
+                            "if (pm.response.code !== 200) {",
+                            "  console.error('Cek OCR gagal:', pm.response.text());",
+                            "  pm.execution.setNextRequest(null);",
+                            "} else {",
+                            "  const body = pm.response.json();",
+                            "  pm.collectionVariables.set('ocr_status', body.status);",
+                            "  if (body.status === 'PENDING' || body.status === 'PROCESSING') {",
+                            "    const count = Number(pm.collectionVariables.get('ocr_poll_count') || 0) + 1;",
+                            "    pm.collectionVariables.set('ocr_poll_count', String(count));",
+                            "    if (count >= 60) {",
+                            "      pm.test('OCR selesai dalam batas waktu', () => pm.expect.fail('OCR masih berjalan setelah 60 pengecekan. Cek terminal backend.'));",
+                            "      pm.execution.setNextRequest(null);",
+                            "    } else {",
+                            "      console.log('OCR masih berjalan, pengecekan ke-' + count);",
+                            "      setTimeout(function () {",
+                            "        pm.execution.setNextRequest(pm.info.requestName);",
+                            "      }, 1000);",
+                            "    }",
+                            "  } else if (body.status === 'COMPLETED') {",
+                            "    pm.test('OCR selesai', () => pm.expect(body.status).to.eql('COMPLETED'));",
+                            "    console.log('Hasil ekstraksi OCR:', body.extracted_data);",
+                            "  } else {",
+                            "    pm.test('OCR berhasil diproses', () => pm.expect.fail(body.message || 'OCR gagal. Cek konfigurasi Tesseract dan terminal backend.'));",
+                            "    pm.execution.setNextRequest(null);",
+                            "  }",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "23C Employee melihat prefill hasil OCR [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/documents/{{ocr_document_id}}/prefill"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "pm.test('Prefill OCR tersedia', () => pm.response.to.have.status(200));",
+                            "if (pm.response.code === 200) {",
+                            "  console.log('Data untuk mengisi form request:', pm.response.json());",
+                            "} else {",
+                            "  console.error('Prefill gagal:', pm.response.text());",
+                            "  pm.execution.setNextRequest(null);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "23D Employee menghubungkan nota ke draft [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}/documents",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"document_id\":\"{{ocr_document_id}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "pm.test('Dokumen berhasil dihubungkan', () => pm.response.to.have.status(200));",
+                            "if (pm.response.code !== 200) {",
+                            "  console.error('Attach dokumen gagal:', pm.response.text());",
+                            "  pm.execution.setNextRequest(null);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "24 Employee submit request [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}/submit",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"allow_failed_ocr\":false}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Menunggu approval', () => pm.expect(pm.response.json().status).to.eql('PENDING_APPROVAL'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "25 Owner menerima notifikasi [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/notifications"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Notifikasi request baru', () => {",
+                            "  const x = pm.response.json().items.find(x => x.request_id === pm.collectionVariables.get('request_id'));",
+                            "  pm.expect(x).to.exist;",
+                            "  pm.collectionVariables.set('owner_notification_id', x.id);",
+                            "});",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "26 Owner review request [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Analisis tersedia', () => pm.expect(pm.response.json().ai_analysis.method).to.eql('HEURISTIC'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "27 Employee tidak boleh approve [403]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}/approve",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "28 Owner approve dan potong saldo [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{approval_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}/approve",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.collectionVariables.set('approval_tx_id', pm.response.json().id);",
+                            "pm.test('Transaksi approved', () => pm.expect(pm.response.json().status).to.eql('APPROVED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "29 Ulang approval key sama tanpa debit lagi [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{approval_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}/approve",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('ID transaksi sama', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('approval_tx_id')));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "30 Saldo Pocket setelah approval [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Remaining Rp9.750.000', () => pm.expect(pm.response.json().remaining_amount).to.eql(9750000));",
+                            "pm.test('Spending Rp250.000', () => pm.expect(pm.response.json().monthly_spent).to.eql(250000));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "31 Saldo dan progress Card setelah approval [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Balance Rp2.750.000', () => pm.expect(pm.response.json().balance).to.eql(2750000));",
+                            "pm.test('Sisa monthly limit Rp1.750.000', () => pm.expect(pm.response.json().monthly_remaining).to.eql(1750000));",
+                            "pm.test('Progress 12.5 persen', () => pm.expect(pm.response.json().monthly_percentage).to.eql(12.5));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "32 Request Employee sudah selesai [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{request_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Request COMPLETED', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "33 Employee menerima notifikasi hasil [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/notifications"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Notifikasi approval', () => pm.expect(pm.response.json().items.some(x => x.request_id === pm.collectionVariables.get('request_id'))).to.eql(true));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "34 Invoice masuk antrean manual [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/invoice-payments"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Invoice QUEUED', () => {",
+                            "  const x = pm.response.json().find(x => x.request_id === pm.collectionVariables.get('request_id'));",
+                            "  pm.expect(x).to.exist;",
+                            "  pm.expect(x.status).to.eql('QUEUED');",
+                            "  pm.collectionVariables.set('invoice_id', x.id);",
+                            "});",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "35 Konfirmasi pembayaran invoice simulasi [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/invoice-payments/{{invoice_id}}/confirm",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"confirmed\":true}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Invoice SIMULATED_PAID', () => pm.expect(pm.response.json().status).to.eql('SIMULATED_PAID'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "36 Konfirmasi invoice berulang tetap aman [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/invoice-payments/{{invoice_id}}/confirm",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"confirmed\":true}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "37 Employee membuat request kedua [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"explanation\":\"Pembelian perlengkapan kantor\",\"request_type\":\"PURCHASE\",\"party_name\":\"Toko Lain\",\"total_amount\":125000,\"needed_by\":\"{{needed_by}}\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('reject_request_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "38 Submit request kedua [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{reject_request_id}}/submit",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"allow_failed_ocr\":false}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "39 Reject tanpa alasan ditolak [422]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{reject_request_id}}/reject",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"reason\":\"\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "40 Owner reject dengan alasan [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{reject_request_id}}/reject",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"reason\":\"Pembelian belum diprioritaskan.\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Request REJECTED', () => pm.expect(pm.response.json().status).to.eql('REJECTED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "41 Employee melihat alasan reject [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests/{{reject_request_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Alasan tersimpan', () => pm.expect(pm.response.json().rejection_reason).to.eql('Pembelian belum diprioritaskan.'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "42 Transaksi langsung Rp100 ribu [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{card_payment_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\",\"amount\":100000,\"description\":\"Pembelian kabel\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.collectionVariables.set('card_tx_id', pm.response.json().id);",
+                            "pm.test('Transaksi approved', () => pm.expect(pm.response.json().status).to.eql('APPROVED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "43 Retry transaksi yang sama [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{card_payment_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\",\"amount\":100000,\"description\":\"Pembelian kabel\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Transaksi tidak duplikat', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('card_tx_id')));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "44 Owner freeze Card [200]",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}/status",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"status\":\"FROZEN\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "45 Transaksi Card frozen ditolak [409]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\",\"amount\":50000,\"description\":\"Uji frozen\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 409) {",
+                            "pm.test('Transaksi DECLINED', () => pm.expect(pm.response.json().status).to.eql('DECLINED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "46 Owner membuka kembali Card [200]",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}/status",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"status\":\"ACTIVE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "47 Melebihi monthly limit Card [409]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\",\"amount\":1800000,\"description\":\"Uji monthly limit\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 409) {",
+                            "pm.test('Transaksi DECLINED', () => pm.expect(pm.response.json().status).to.eql('DECLINED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "48 Nominal pecahan ditolak [422]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{card_id}}\",\"amount\":1000.5,\"description\":\"Uji integer\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "49 Budget di bawah spending ditolak [409]",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"allocated_amount\":100000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "50 Saldo tetap setelah transaksi ditolak [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Remaining Rp9.650.000', () => pm.expect(pm.response.json().remaining_amount).to.eql(9650000));",
+                            "pm.test('Spending tetap Rp350.000', () => pm.expect(pm.response.json().monthly_spent).to.eql(350000));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "51 Buat Pocket kecil untuk uji saldo [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"name\":\"Uji saldo\",\"allocated_amount\":1000000,\"monthly_limit\":1000000,\"theme\":\"BLUE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('small_pocket_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "52 Buat Card pada Pocket kecil [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{small_pocket_id}}\",\"name\":\"Uji saldo Card\",\"category\":\"Operational\",\"theme\":\"PURPLE\",\"initial_balance\":1000000,\"monthly_limit\":1000000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('small_card_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "53 Kurangi budget Pocket kecil [200]",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{small_pocket_id}}",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"allocated_amount\":600000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "54 Transaksi melebihi remaining Pocket [409]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"card_id\":\"{{small_card_id}}\",\"amount\":700000,\"description\":\"Uji remaining Pocket\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 409) {",
+                            "pm.test('Transaksi DECLINED', () => pm.expect(pm.response.json().status).to.eql('DECLINED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "55 Buat top-up QR Rp1 juta [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Idempotency-Key",
+                        "value": "{{fresh_key}}"
+                    }
+                ],
+                "url": "{{base_url}}/payments",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{pocket_id}}\",\"amount\":1000000,\"method\":\"QR_CODE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('payment_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "56 Lihat QR simulasi [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/payments/{{payment_id}}/qr"
+            }
+        },
+        {
+            "name": "57 Konfirmasi top-up [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/payments/{{payment_id}}/confirm",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"confirmed\":true}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Top-up COMPLETED', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "58 Konfirmasi top-up ulang [200]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/payments/{{payment_id}}/confirm",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"confirmed\":true}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "name": "59 Cek saldo akhir Pocket utama [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Remaining Rp10.650.000', () => pm.expect(pm.response.json().remaining_amount).to.eql(10650000));",
+                            "pm.test('Allocated Rp11.000.000', () => pm.expect(pm.response.json().allocated_amount).to.eql(11000000));",
+                            "pm.test('Monthly limit tetap Rp8.000.000', () => pm.expect(pm.response.json().monthly_limit).to.eql(8000000));",
+                            "pm.test('Monthly spent Rp350.000', () => pm.expect(pm.response.json().monthly_spent).to.eql(350000));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "60 Lihat analisis Pocket [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}/analysis"
+            }
+        },
+        {
+            "name": "61 Download laporan CSV [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}/report.csv"
+            }
+        },
+        {
+            "name": "62 Riwayat termasuk transaksi ditolak [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/transactions?pocket_id={{pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Dua approved dan dua declined', () => {",
+                            "  const a = pm.response.json().items;",
+                            "  pm.expect(a.filter(x => x.status === 'APPROVED')).to.have.lengthOf(2);",
+                            "  pm.expect(a.filter(x => x.status === 'DECLINED')).to.have.lengthOf(2);",
+                            "});",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "63 Cari request selesai [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/fund-requests?request_status=COMPLETED&search=ATK"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Request benar ditemukan', () => pm.expect(pm.response.json().items.some(x => x.id === pm.collectionVariables.get('request_id'))).to.eql(true));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "64 Tandai notifikasi Owner dibaca [200]",
+            "request": {
+                "method": "PATCH",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/notifications/{{owner_notification_id}}/read"
+            }
+        },
+        {
+            "name": "65 Cabut akses Pocket [200]",
+            "request": {
+                "method": "DELETE",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{pocket_id}}/employees/{{employee_id}}"
+            }
+        },
+        {
+            "name": "66 Card B kehilangan akses turunan [403]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_b_id}}"
+            }
+        },
+        {
+            "name": "67 Card A masih memiliki akses langsung [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}"
+            }
+        },
+        {
+            "name": "68 Cabut akses langsung Card A [200]",
+            "request": {
+                "method": "DELETE",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}/employees/{{employee_id}}"
+            }
+        },
+        {
+            "name": "69 Card A tidak dapat dibuka lagi [403]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{employee_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/cards/{{card_id}}"
+            }
+        },
+        {
+            "name": "70 Buat Pocket uji concurrency [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/pockets",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"name\":\"Uji concurrency\",\"allocated_amount\":1000000,\"monthly_limit\":1000000,\"theme\":\"BLUE\"}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('race_pocket_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "71 Buat Card uji concurrency [201]",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "url": "{{base_url}}/cards",
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\"pocket_id\":\"{{race_pocket_id}}\",\"name\":\"Concurrent Card\",\"category\":\"Operational\",\"theme\":\"PURPLE\",\"initial_balance\":1000000,\"monthly_limit\":1000000}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 201) {",
+                            "pm.collectionVariables.set('race_card_id', pm.response.json().id);",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "72 Kirim dua transaksi bersamaan dari script [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{race_pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "const codes = []; let completed = 0;",
+                            "const url = pm.collectionVariables.get('base_url');",
+                            "const token = pm.collectionVariables.get('owner_token');",
+                            "for (let i = 0; i < 2; i++) {",
+                            "  pm.sendRequest({",
+                            "    url: url + '/transactions',",
+                            "    method: 'POST',",
+                            "    header: {",
+                            "      'Authorization': 'Bearer ' + token,",
+                            "      'Content-Type': 'application/json',",
+                            "      'Idempotency-Key': pm.variables.replaceIn('{{$guid}}')",
+                            "    },",
+                            "    body: {",
+                            "      mode: 'raw',",
+                            "      raw: JSON.stringify({",
+                            "        card_id: pm.collectionVariables.get('race_card_id'),",
+                            "        amount: 700000,",
+                            "        description: 'Concurrency ' + i",
+                            "      })",
+                            "    }",
+                            "  }, (err, res) => {",
+                            "    pm.test('Concurrency request ' + i + ' menerima respons', () => pm.expect(err).to.eql(null));",
+                            "    codes.push(res ? res.code : 0);",
+                            "    completed++;",
+                            "    if (completed === 2) {",
+                            "      pm.test('Hanya satu transaksi concurrency sukses', () => pm.expect(codes.sort((a,b) => a-b)).to.eql([200,409]));",
+                            "    }",
+                            "  });",
+                            "}",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "name": "73 Cek saldo setelah concurrency [200]",
+            "request": {
+                "method": "GET",
+                "header": [
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer {{owner_token}}"
+                    }
+                ],
+                "url": "{{base_url}}/pockets/{{race_pocket_id}}"
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "type": "text/javascript",
+                        "exec": [
+                            "if (pm.response.code === 200) {",
+                            "pm.test('Remaining Rp300.000', () => pm.expect(pm.response.json().remaining_amount).to.eql(300000));",
+                            "pm.test('Spending Rp700.000', () => pm.expect(pm.response.json().monthly_spent).to.eql(700000));",
+                            "}"
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+}
