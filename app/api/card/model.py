@@ -16,7 +16,7 @@ class Card(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "cards"
 
     pocket_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("app.pockets.id"),
+        ForeignKey("pockets.id"),
         nullable=False,
         index=True
     )
@@ -99,13 +99,13 @@ class CardAccess(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "card_access"
 
     card_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("app.cards.id"),
+        ForeignKey("cards.id"),
         nullable=False,
         index=True
     )
 
     employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("app.users.id"),
+        ForeignKey("users.id"),
         nullable=False,
         index=True
     )

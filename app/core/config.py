@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     DATABASE_URL: str
     SECRET_KEY: str
+    TESSERACT_CMD: str = ""
+    TESSDATA_PREFIX: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
