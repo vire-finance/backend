@@ -1,95 +1,58 @@
-import uuid
+from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Response,
-    status
-)
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Response
 
-from app.core.database import get_db
-from app.api.auth.dependencies import (get_current_user)
+from app.api.pocket.schema import PocketCreate, PocketUpdate
 from app.api.pocket.service import PocketService
-from app.api.pocket.schema import PocketCreate, PocketUpdate, PocketBudgetUpdate, PocketListItem, PocketDetail, PocketResponse, PocketAccessCreate, PocketAccessResponse
+from app.core.context import Ctx
 
-router = APIRouter(prefix="/pockets", tags=["Pocket"])
+router = APIRouter(tags=["Pocket"])
 
-def get_service(db: Session = Depends(get_db)):
-    return PocketService(db)
+@router.get("/employees")
+def list_employees(ctx: Ctx):
+    return PocketService(ctx).employees()
 
-@router.get("", response_model=list[PocketListItem])
-def list_pockets(
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.list_pockets(current_user.id)
+@router.get("/pockets")
+def list_pockets(ctx: Ctx):
+    return PocketService(ctx).list()
 
-@router.post("", response_model=PocketResponse, status_code=status.HTTP_201_CREATED)
-def create_pocket(
-    payload: PocketCreate,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.create_pocket(owner_id=current_user.id, payload=payload)
+@router.post("/pockets", status_code=201)
+def create_pocket(payload: PocketCreate, ctx: Ctx):
+    return PocketService(ctx).create(payload)
 
-@router.get("/{pocket_id}", response_model=PocketDetail)
-def get_pocket(
-    pocket_id: uuid.UUID,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.get_detail(pocket_id=pocket_id, user_id=current_user.id)
+@router.get("/pockets/{pocket_id}")
+def detail_pocket(pocket_id: UUID, ctx: Ctx):
+    return PocketService(ctx).detail(pocket_id)
 
-@router.patch("/{pocket_id}", response_model=PocketResponse)
-def update_pocket(
-    pocket_id: uuid.UUID,
-    payload: PocketUpdate,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.update_pocket(
-        pocket_id=pocket_id,
-        owner_id=current_user.id,
-        payload=payload
+@router.patch("/pockets/{pocket_id}")
+def update_pocket(pocket_id: UUID, payload: PocketUpdate, ctx: Ctx):
+    return PocketService(ctx).update(pocket_id, payload)
+
+@router.get("/pockets/{pocket_id}/employees")
+def pocket_employees(pocket_id: UUID, ctx: Ctx):
+    return PocketService(ctx).employees(pocket_id)
+
+@router.put("/pockets/{pocket_id}/employees/{employee_id}")
+def grant_access(pocket_id: UUID, employee_id: UUID, ctx: Ctx):
+    return PocketService(ctx).access(pocket_id, employee_id, True)
+
+@router.delete("/pockets/{pocket_id}/employees/{employee_id}")
+def revoke_access(pocket_id: UUID, employee_id: UUID, ctx: Ctx):
+    return PocketService(ctx).access(pocket_id, employee_id, False)
+
+@router.get("/pockets/{pocket_id}/analysis")
+def analysis(pocket_id: UUID, ctx: Ctx):
+    return PocketService(ctx).analysis(pocket_id)
+
+@router.get("/pockets/{pocket_id}/report.csv")
+def report(pocket_id: UUID, ctx: Ctx):
+    return Response(
+        content=PocketService(ctx).report(pocket_id),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="pocket-{pocket_id}.csv"'
+            ),
+            "Cache-Control": "private, no-store",
+        },
     )
-
-@router.patch("/{pocket_id}/budget", response_model=PocketResponse)
-def update_budget(
-    pocket_id: uuid.UUID,
-    payload: PocketBudgetUpdate,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.update_budget(
-        pocket_id=pocket_id,
-        owner_id=current_user.id,
-        payload=payload
-    )
-
-@router.post("/{pocket_id}/access", response_model=PocketAccessResponse, status_code=status.HTTP_201_CREATED)
-def grant_access(
-    pocket_id: uuid.UUID,
-    payload: PocketAccessCreate,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    return service.grant_access(
-        pocket_id=pocket_id,
-        owner_id=current_user.id,
-        employee_id=payload.employee_id
-    )
-
-@router.delete("/{pocket_id}/access/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
-def revoke_access(
-    pocket_id: uuid.UUID,
-    employee_id: uuid.UUID,
-    current_user=Depends(get_current_user),
-    service: PocketService = Depends(get_service)
-):
-    service.revoke_access(
-        pocket_id=pocket_id,
-        owner_id=current_user.id,
-        employee_id=employee_id
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

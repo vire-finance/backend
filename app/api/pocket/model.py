@@ -1,5 +1,4 @@
 import uuid
-
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -11,7 +10,6 @@ from app.shared.base import Base, UUIDPrimaryKey, Timestamp
 if TYPE_CHECKING:
     from app.api.card.model import Card
 
-
 class Pocket(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "pockets"
 
@@ -21,36 +19,13 @@ class Pocket(Base, UUIDPrimaryKey, Timestamp):
         index=True
     )
 
-    name: Mapped[str] = mapped_column(
-        String(100),
-        nullable=False
-    )
-
-    allocated_amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2),
-        nullable=False
-    )
-
-    remaining_amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 2),
-        nullable=False
-    )
-
-    theme: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True
-    )
-
-    cards: Mapped[list["Card"]] = relationship(
-        "Card",
-        back_populates="pocket"
-    )
-
-    accesses: Mapped[list["PocketAccess"]] = relationship(
-        "PocketAccess",
-        back_populates="pocket",
-        cascade="all, delete-orphan"
-    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    allocated_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    remaining_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    monthly_limit: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    theme: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    cards: Mapped[list["Card"]] = relationship("Card", back_populates="pocket")
+    accesses: Mapped[list["PocketAccess"]] = relationship("PocketAccess", back_populates="pocket", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint(
@@ -65,33 +40,21 @@ class Pocket(Base, UUIDPrimaryKey, Timestamp):
             "remaining_amount <= allocated_amount",
             name="ck_pocket_remaining_not_exceed_allocated"
         ),
+        CheckConstraint(
+            "monthly_limit > 0",
+            name="ck_pocket_monthly_limit_positive"
+        ),
     )
-
 
 class PocketAccess(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "pocket_access"
 
-    pocket_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("pockets.id"),
-        nullable=False,
-        index=True
-    )
-
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"),
-        nullable=False,
-        index=True
-    )
-
-    pocket: Mapped["Pocket"] = relationship(
-        "Pocket",
-        back_populates="accesses"
-    )
-
+    pocket_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pockets.id"), nullable=False, index=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    pocket: Mapped["Pocket"] = relationship("Pocket", back_populates="accesses")
     __table_args__ = (
         UniqueConstraint(
-            "pocket_id",
-            "employee_id",
+            "pocket_id", "employee_id",
             name="uq_pocket_employee_access"
         ),
     )
