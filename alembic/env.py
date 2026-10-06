@@ -11,6 +11,7 @@ from app.shared.base import Base
 from app.api.auth import model as auth_model
 from app.api.pocket import model as pocket_model
 from app.api.card import model as card_model
+from app.api.ocr import model as ocr_model  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

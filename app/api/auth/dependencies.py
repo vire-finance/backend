@@ -16,26 +16,68 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    claims = decode_access_token(credentials.credentials)
-    if claims.get("typ") == "refresh":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token required")
+        raise unauthorized
+
     try:
-        user_id, session_id = uuid.UUID(claims["sub"]), uuid.UUID(claims["sid"])
+        claims = decode_access_token(credentials.credentials)
+    except Exception:
+        raise unauthorized
+
+    # Tolak jika token berupa refresh token atau pin_verification token
+    if claims.get("typ") == "refresh" or claims.get("purpose") == "pin_verification":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required.",
+        )
+
+    try:
+        user_id = uuid.UUID(claims["sub"])
+        session_id = uuid.UUID(claims["sid"])
     except (ValueError, KeyError, TypeError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        )
+
     session = db.get(AuthSession, session_id)
     user = db.get(User, user_id)
     now = datetime.now(timezone.utc)
-    if (not session or session.user_id != user_id or session.revoked_at is not None
-            or session.expires_at <= now or not user
-            or (user.role.value if user.role else "PENDING") != claims.get("role")):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    if session:
+        # SQLite stores naive datetimes; normalise to UTC-aware for comparison.
+        exp = session.expires_at
+        if exp is not None and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    else:
+        exp = None
+
+    if (
+        not session
+        or session.user_id != user_id
+        or session.revoked_at is not None
+        or exp is None
+        or exp <= now
+        or not user
+        or (user.role.value if user.role else "PENDING") != claims.get("role")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        )
+
     return user
 
 
 def get_active_user(user: User = Depends(get_current_user)) -> User:
     if not user.role:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Pilih role terlebih dahulu.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pilih role terlebih dahulu.",
+        )
     return user
