@@ -9,6 +9,13 @@ class RegisterRequest(BaseModel):
     password: SecretStr = Field(min_length=10, max_length=128)
     confirm_password: SecretStr
 
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, value: str) -> str:
+        if not 8 <= sum(char.isdigit() for char in value) <= 15:
+            raise ValueError("Phone number must contain 8 to 15 digits")
+        return value.strip()
+
     @field_validator("password")
     @classmethod
     def validate_password_strength(cls, value: SecretStr) -> SecretStr:

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -57,7 +57,7 @@ def validate_file_content(
 
     normalized_mime = content_type.lower().split(";")[0].strip()
 
-    if normalized_mime not in MIME_TYPE_MAPPING:
+    if normalized_mime not in MIME_TYPE_MAPPING.values():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -66,7 +66,7 @@ def validate_file_content(
             ),
         )
 
-    if extension not in MIME_TYPE_MAPPING[normalized_mime]:
+    if MIME_TYPE_MAPPING[extension] != normalized_mime:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -127,6 +127,8 @@ def process_ocr_document_task(document_id: uuid.UUID) -> None:
                 lang="ind+eng",
             )
 
+            if not raw_text.strip():
+                raise ValueError("No readable text; use manual entry")
             extracted = parse_ocr_text(raw_text)
 
             doc.ocr_status = OCRStatus.COMPLETED
@@ -175,13 +177,13 @@ class OCRService:
         file: UploadFile,
         user_id: uuid.UUID,
     ) -> OCRDocument:
-        original_name = file.filename or "unknown"
+        original_name = Path((file.filename or "unknown").replace("\\", "/")).name[:255]
 
         ext = Path(original_name).suffix.lower()
 
         content_type = file.content_type or ""
 
-        content = await file.read()
+        content = await file.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
 
         validate_file_content(
             content,
@@ -220,10 +222,14 @@ class OCRService:
             ocr_status=OCRStatus.PENDING,
         )
 
-        self.repository.create(document)
-
-        self.db.commit()
-        self.db.refresh(document)
+        try:
+            self.repository.create(document)
+            self.db.commit()
+            self.db.refresh(document)
+        except Exception:
+            self.db.rollback()
+            Path(storage_path).unlink(missing_ok=True)
+            raise
 
         return document
 
@@ -263,6 +269,7 @@ class OCRService:
                     other_party_name=doc.extracted_other_party_name,
                     total_amount=doc.extracted_total_amount,
                     date=doc.extracted_date,
+                    explanation=(doc.raw_ocr_text or "")[:5000],
                 ),
             )
 

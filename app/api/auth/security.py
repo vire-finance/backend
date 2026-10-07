@@ -62,12 +62,15 @@ def decode_access_token(token: str) -> dict:
         if not hmac.compare_digest(expected, _b64decode(signature)):
             raise ValueError("invalid signature")
         data = json.loads(_b64decode(payload))
-        if json.loads(_b64decode(header)).get("alg") != "HS256":
+        decoded_header = json.loads(_b64decode(header))
+        if not isinstance(data, dict) or not isinstance(decoded_header, dict):
+            raise ValueError("invalid token structure")
+        if decoded_header.get("alg") != "HS256":
             raise ValueError("invalid algorithm")
-        if data.get("exp", 0) <= datetime.now(timezone.utc).timestamp():
+        if not isinstance(data.get("exp"), (int, float)) or data["exp"] <= datetime.now(timezone.utc).timestamp():
             raise ValueError("expired")
         return data
-    except (ValueError, TypeError, json.JSONDecodeError, KeyError):
+    except (ValueError, TypeError, UnicodeError, json.JSONDecodeError, KeyError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
 

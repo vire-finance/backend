@@ -99,6 +99,10 @@ class User(Base, UUIDPrimaryKey, Timestamp):
         server_default="0",
     )
 
+    security_pin_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+
     pin_locked_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

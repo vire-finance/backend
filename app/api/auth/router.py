@@ -109,6 +109,7 @@ def register(
 
 @router.post("/role/owner", response_model=InviteResponse)
 def select_owner_role(payload: OwnerSetupRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
     if user.role is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role sudah dipilih.")
     user.role = UserRole.OWNER
@@ -124,10 +125,11 @@ def select_owner_role(payload: OwnerSetupRequest, user: User = Depends(get_curre
 
 @router.post("/role/employee", response_model=UserResponse)
 def select_employee_role(payload: EmployeeSetupRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
     if user.role is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role sudah dipilih.")
     code_hash = hashlib.sha256(payload.invitation_code.encode()).hexdigest()
-    owner = db.scalar(select(User).where(User.invite_code_hash == code_hash))
+    owner = db.scalar(select(User).where(User.invite_code_hash == code_hash).with_for_update().execution_options(populate_existing=True))
     now = datetime.now(timezone.utc)
     if not owner or owner.role != UserRole.OWNER or not owner.invite_code_expires_at or owner.invite_code_expires_at <= now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invitation code tidak valid atau kedaluwarsa.")
@@ -136,8 +138,6 @@ def select_employee_role(payload: EmployeeSetupRequest, user: User = Depends(get
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Kapasitas employee owner sudah penuh.")
     user.role = UserRole.EMPLOYEE
     user.employer_id = owner.id
-    db.commit()
-    db.refresh(user)
     db.commit()
 
     return UserResponse(
@@ -181,13 +181,18 @@ def refresh(
     claims = decode_access_token(credentials.credentials)
     if claims.get("typ") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token required")
-    session = db.get(AuthSession, uuid.UUID(claims["sid"]))
-    user = db.get(User, uuid.UUID(claims["sub"]))
+    try:
+        session_id = uuid.UUID(claims["sid"])
+        user_id = uuid.UUID(claims["sub"])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    session = db.scalar(select(AuthSession).where(AuthSession.id == session_id).with_for_update().execution_options(populate_existing=True))
+    user = db.get(User, user_id)
     now = datetime.now(timezone.utc)
     if not session or not user or session.user_id != user.id or session.revoked_at or session.expires_at <= now:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
-    role = user.role.value if user.role else "PENDING"
-    return TokenResponse(access_token=create_access_token(user.id, role, session.id), refresh_token=create_refresh_token(user.id, role, session.id), expires_in=ACCESS_TOKEN_MINUTES * 60, role=role)
+    session.revoked_at = now
+    return _issue_token(db, user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -210,6 +215,7 @@ def logout(
 def regenerate_invite_code(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hanya owner yang dapat membuat invitation code.")
+    user = db.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
     code = secrets.token_urlsafe(18)
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     user.invite_code_hash = hashlib.sha256(code.encode()).hexdigest()

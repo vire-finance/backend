@@ -14,7 +14,7 @@ class ActionType(str, Enum):
     APPROVAL = "APPROVAL"
 
 
-def create_pin_verification_token(user_id: str, action_type: ActionType) -> str:
+def create_pin_verification_token(user_id: str, action_type: ActionType, session_id: str, pin_version: int) -> str:
     verified_at = datetime.now(timezone.utc)
     return jwt.encode(
         {
@@ -23,6 +23,8 @@ def create_pin_verification_token(user_id: str, action_type: ActionType) -> str:
             "actionType": action_type.value,
             "verifiedAt": int(verified_at.timestamp()),
             "purpose": "pin_verification",
+            "sid": session_id,
+            "pin_version": pin_version,
             "jti": str(uuid4()),
             "iat": verified_at,
             "exp": verified_at + PIN_VERIFICATION_TTL,
