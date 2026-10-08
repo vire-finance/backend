@@ -11,6 +11,8 @@ from app.shared.base import Base
 from app.api.auth import model as auth_model
 from app.api.pocket import model as pocket_model
 from app.api.card import model as card_model
+from app.api.ocr import model as ocr_model  # noqa: F401
+import app.core.models  # Register every existing model for schema inspection.
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -45,7 +47,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -65,7 +67,7 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

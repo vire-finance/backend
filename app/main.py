@@ -7,14 +7,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import app.core.models
 
-from app.api.auth.router import router as auth_router
-from app.api.ocr.router import router as ocr_router
 from app.api.pocket.router import router as pocket_router
 from app.api.card.router import router as card_router
+from app.api.auth.router import router as auth_router
+from app.api.profile.router import router as profile_router
+from app.api.security.router import router as security_router
+from app.api.ocr.router import router as ocr_router
 from app.api.request.router import router as request_router
 from app.api.transaction.router import router as transaction_router
 from app.api.payment.router import router as payment_router
 from app.api.notification.router import router as notification_router
+from app.api.dashboard.router import router as dashboard_router
+from app.api.history.router import router as history_router
+from app.api.ai.router import router as ai_router
 from app.core.config import settings
 
 
@@ -30,7 +35,7 @@ app.add_middleware(
         "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
     ],
     allow_headers=[
-        "Authorization", "Content-Type", "Idempotency-Key",
+        "Authorization", "Content-Type", "Idempotency-Key", "X-Action-Token",
     ],
     expose_headers=["Content-Disposition"],
 )
@@ -38,15 +43,8 @@ app.add_middleware(
 
 @app.exception_handler(SQLAlchemyError)
 async def database_error(request: Request, exception: SQLAlchemyError):
-    logger.error(
-        "Database error on %s",
-        request.url.path,
-        exc_info=(
-            type(exception),
-            exception,
-            exception.__traceback__,
-        ),
-    )
+    # SQLAlchemy exceptions may contain bound password/PIN hashes or secrets.
+    logger.error("Database error on %s (%s)", request.url.path, type(exception).__name__)
     return JSONResponse(
         status_code=503,
         content={
@@ -62,10 +60,16 @@ app.include_router(auth_router)
 app.include_router(ocr_router)
 app.include_router(pocket_router)
 app.include_router(card_router)
+app.include_router(profile_router)
+app.include_router(security_router)
+
 app.include_router(request_router)
 app.include_router(transaction_router)
 app.include_router(payment_router)
 app.include_router(notification_router)
+app.include_router(dashboard_router)
+app.include_router(history_router)
+app.include_router(ai_router)
 
 @app.get("/health")
 def health():

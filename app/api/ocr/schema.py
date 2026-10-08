@@ -11,6 +11,7 @@ class ExtractedData(BaseModel):
     other_party_name: str | None = Field(default=None)
     total_amount: Decimal | None = Field(default=None)
     date: datetime.date | None = Field(default=None)
+    explanation: str | None = Field(default=None)
 
 
 class OCRDocumentUploadResponse(BaseModel):

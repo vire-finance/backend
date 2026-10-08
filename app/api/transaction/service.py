@@ -245,20 +245,17 @@ class TransactionService:
         if card_id:
             self.ctx.card(card_id)
 
-        rows = self.repo.history(
-            self.ctx.owner_id, pocket_id, card_id
-        )
+        from sqlalchemy import select, func
+        from app.api.history.repository import HistoryRepository
 
-        visible = [
-            row for row in rows
-            if self.ctx.can_card(self.ctx.raw_card(row.card_id))
-            and (status is None or row.status == status)
-        ]
-
-        return {
-            "total": len(visible),
-            "items": [
-                self.view(row)
-                for row in visible[offset:offset + limit]
-            ],
-        }
+        statement = HistoryRepository(self.ctx).query()
+        if pocket_id:
+            statement = statement.where(Transaction.pocket_id == pocket_id)
+        if card_id:
+            statement = statement.where(Transaction.card_id == card_id)
+        if status:
+            statement = statement.where(Transaction.status == status)
+        total = self.ctx.db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+        rows = self.ctx.db.scalars(statement.order_by(Transaction.created_at.desc(), Transaction.id)
+                                   .offset(offset).limit(limit)).all()
+        return {"total": total, "items": [self.view(row) for row in rows]}

@@ -46,3 +46,15 @@ class NotificationService:
 
         row.is_read = True
         return self.ctx.commit({"message": "Notifikasi dibaca."})
+
+    def unread_count(self):
+        from sqlalchemy import func, select
+        count = self.ctx.db.scalar(select(func.count(Notification.id)).where(
+            Notification.user_id == self.ctx.user.id, Notification.is_read.is_(False))) or 0
+        return {"unread_count": count}
+
+    def read_all(self):
+        from sqlalchemy import update
+        result = self.ctx.db.execute(update(Notification).where(
+            Notification.user_id == self.ctx.user.id, Notification.is_read.is_(False)).values(is_read=True))
+        return self.ctx.commit({"updated_count": result.rowcount, "unread_count": 0})

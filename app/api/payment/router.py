@@ -1,11 +1,13 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Depends, Header, Response
 
 from app.api.payment.schema import TopUpCreate
 from app.api.payment.service import PaymentService
 from app.core.context import Ctx
+from app.api.security.middleware import require_pin_verification
+from app.api.security.tokens import ActionType
 from app.shared.schema import Confirmation
 
 router = APIRouter(tags=["Payment"])
@@ -24,7 +26,7 @@ def get_payment(payment_id: UUID, ctx: Ctx):
     service = PaymentService(ctx)
     return service.view(service.get(payment_id))
 
-@router.post("/payments/{payment_id}/confirm")
+@router.post("/payments/{payment_id}/confirm", dependencies=[Depends(require_pin_verification(ActionType.PAYMENT, owner_only=True))])
 def confirm_payment(payment_id: UUID, payload: Confirmation, ctx: Ctx,):
     return PaymentService(ctx).confirm(payment_id)
 
@@ -40,6 +42,6 @@ def get_qr(payment_id: UUID, ctx: Ctx):
 def list_invoices(ctx: Ctx):
     return PaymentService(ctx).list_invoices()
 
-@router.post("/invoice-payments/{payment_id}/confirm")
+@router.post("/invoice-payments/{payment_id}/confirm", dependencies=[Depends(require_pin_verification(ActionType.PAYMENT, owner_only=True))])
 def confirm_invoice(payment_id: UUID, payload: Confirmation, ctx: Ctx,):
     return PaymentService(ctx).confirm_invoice(payment_id)

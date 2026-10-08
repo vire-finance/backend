@@ -1,13 +1,15 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.api.transaction.schema import TransactionCreate
 from app.api.transaction.service import TransactionService
 from app.core.context import Ctx
+from app.api.security.middleware import require_pin_verification
+from app.api.security.tokens import ActionType
 
 router = APIRouter(prefix="/transactions", tags=["Transaction"])
 Key = Annotated[UUID, Header(alias="Idempotency-Key")]
@@ -25,7 +27,7 @@ def transaction_response(data):
         content=jsonable_encoder(data),
     )
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_pin_verification(ActionType.PAYMENT))])
 def create_transaction(payload: TransactionCreate, ctx: Ctx, key: Key):
     data = TransactionService(ctx).execute(
         payload.card_id,

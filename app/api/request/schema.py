@@ -4,14 +4,14 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, field_validator
 
 from app.shared.enums import FundRequestType
-from app.shared.schema import Input, Money
+from app.shared.schema import Input, PositiveMoney
 
 class FundRequestInput(Input):
     pocket_id: UUID
     explanation: str = Field(min_length=1, max_length=5000)
     request_type: FundRequestType
     party_name: str = Field(min_length=1, max_length=150)
-    total_amount: Money
+    total_amount: PositiveMoney
     needed_by: AwareDatetime
 
     @field_validator("needed_by")

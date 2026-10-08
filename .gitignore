@@ -28,3 +28,13 @@ htmlcov/
 
 # Logs
 *.log
+
+.README.md
+
+# Local audit and verification reports
+/docs/
+
+# Local documentation and Postman files
+/README.md
+/postman_collection.json
+/postman/

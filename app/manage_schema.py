@@ -10,7 +10,7 @@ def create_schema(reset=False):
         if reset:
             connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             connection.execute(text("CREATE SCHEMA public"))
-            
+
         Base.metadata.create_all(connection)
 
 if __name__ == "__main__":

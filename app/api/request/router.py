@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse
 
 from app.api.request.schema import (
@@ -12,6 +12,8 @@ from app.api.request.schema import (
 from app.api.request.service import FundRequestService
 from app.api.transaction.router import transaction_response
 from app.core.context import Ctx
+from app.api.security.middleware import require_pin_verification
+from app.api.security.tokens import ActionType
 from app.shared.enums import FundRequestStatus, FundRequestType
 
 router = APIRouter(tags=["Fund Request"])
@@ -78,12 +80,12 @@ def document_file(request_id: UUID, document_id: UUID, ctx: Ctx, download: bool 
 def submit(request_id: UUID, payload: RequestSubmit, ctx: Ctx):
     return FundRequestService(ctx).submit(request_id, payload)
 
-@router.post("/fund-requests/{request_id}/approve")
+@router.post("/fund-requests/{request_id}/approve", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
 def approve(request_id: UUID, payload: RequestApprove, ctx: Ctx, key: Key):
     return transaction_response(
         FundRequestService(ctx).approve(request_id, payload, key)
     )
 
-@router.post("/fund-requests/{request_id}/reject")
+@router.post("/fund-requests/{request_id}/reject", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
 def reject(request_id: UUID, payload: RequestReject, ctx: Ctx):
     return FundRequestService(ctx).reject(request_id, payload)

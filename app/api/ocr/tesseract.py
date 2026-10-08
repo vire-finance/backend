@@ -27,10 +27,12 @@ def run_ocr_on_image(
     image: Image.Image,
     lang: str = "ind+eng",
 ) -> str:
+    if image.width * image.height > settings.OCR_MAX_IMAGE_PIXELS:
+        raise OCRProcessingError("Image dimensions exceed the OCR limit.")
     configure_tesseract()
 
     try:
-        return pytesseract.image_to_string(image, lang=lang)
+        return pytesseract.image_to_string(image, lang=lang, timeout=settings.OCR_TIMEOUT_SECONDS)
 
     except pytesseract.TesseractNotFoundError as e:
         logger.error(
@@ -63,6 +65,7 @@ def run_ocr_on_image(
                 return pytesseract.image_to_string(
                     image,
                     lang="eng",
+                    timeout=settings.OCR_TIMEOUT_SECONDS,
                 )
 
             except Exception as fallback_err:
@@ -107,30 +110,27 @@ def run_ocr(
 
     if is_pdf:
         try:
-            pdf = pdfium.PdfDocument(file_path)
             extracted_texts = []
-
-            max_pages = min(len(pdf), 5)
-
-            for page_idx in range(max_pages):
-                page = pdf[page_idx]
-                bitmap = page.render(scale=2.0)
-
-                if hasattr(bitmap, "to_pil_image"):
-                    pil_image = bitmap.to_pil_image()
-                else:
-                    pil_image = bitmap.to_pil()
-
-                page_text = run_ocr_on_image(
-                    pil_image,
-                    lang=lang,
-                )
-
-                if not page_text.strip():
-                    continue
-
-                extracted_texts.append(page_text.strip())
-
+            with pdfium.PdfDocument(file_path) as pdf:
+                for page_idx in range(min(len(pdf), 5)):
+                    page = pdf[page_idx]
+                    try:
+                        width, height = page.get_size()
+                        if width * height * 4 > settings.OCR_MAX_IMAGE_PIXELS:
+                            raise OCRProcessingError("PDF page dimensions exceed the OCR limit.")
+                        bitmap = page.render(scale=2.0)
+                        try:
+                            pil_image = bitmap.to_pil()
+                            try:
+                                page_text = run_ocr_on_image(pil_image, lang=lang)
+                            finally:
+                                pil_image.close()
+                        finally:
+                            bitmap.close()
+                    finally:
+                        page.close()
+                    if page_text.strip():
+                        extracted_texts.append(page_text.strip())
             return "\n\n".join(extracted_texts)
 
         except OCRProcessingError:

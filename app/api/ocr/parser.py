@@ -1,4 +1,4 @@
-﻿import re
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -202,7 +202,7 @@ def extract_total_amount(text: str) -> Decimal | None:
     )
 
     amount_re = re.compile(
-        r"(?:rp\.?|idr)?\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
+        r"(?:rp\.?|idr)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
         re.IGNORECASE,
     )
 
@@ -258,7 +258,7 @@ def extract_total_amount(text: str) -> Decimal | None:
                     return amount
 
     rp_re = re.compile(
-        r"(?:rp\.?|idr)\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
+        r"(?:rp\.?|idr)\s*([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
         re.IGNORECASE,
     )
 

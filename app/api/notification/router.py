@@ -14,3 +14,12 @@ def list_notifications(ctx: Ctx, unread_only: bool = Query(False), offset: int =
 @router.patch("/{notification_id}/read")
 def read_notification(notification_id: UUID, ctx: Ctx):
     return NotificationService(ctx).read(notification_id)
+
+@router.get("/unread-count")
+def unread_count(ctx: Ctx):
+    return NotificationService(ctx).unread_count()
+
+
+@router.patch("/read-all")
+def read_all(ctx: Ctx):
+    return NotificationService(ctx).read_all()
