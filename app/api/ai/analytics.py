@@ -3,7 +3,9 @@ from datetime import timezone
 from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+from app.api.transaction.model import Transaction
 
 from app.api.ai.periods import local_time, resolve_period, shift_month, utc_naive
 from app.api.ai.repository import AnalyticsRepository
@@ -69,7 +71,7 @@ class AnalyticsService:
         from app.api.transaction.model import Transaction
         pocket_totals = grouped(Transaction.pocket_id)
         card_totals = grouped(Transaction.card_id)
-        category_totals = grouped(Card.category)
+        category_totals = grouped(func.coalesce(Transaction.category, Card.category, "Others"))
 
         def breakdown(values):
             amount, tx_count, old, _ = values
