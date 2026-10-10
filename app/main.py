@@ -1,4 +1,7 @@
 import logging
+import asyncio
+from contextlib import asynccontextmanager, suppress
+from app.api.notification.worker import run_worker
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +28,15 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="VIRE API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    worker = asyncio.create_task(run_worker())
+    try: yield
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError): await worker
+
+app = FastAPI(title="VIRE API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -74,3 +85,6 @@ app.include_router(ai_router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+from app.api.funding.router import router as funding_router
+app.include_router(funding_router)
