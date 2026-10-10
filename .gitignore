@@ -38,3 +38,16 @@ htmlcov/
 /README.md
 /postman_collection.json
 /postman/
+
+# Local Python runtime and setup files
+.python-runtime/
+.setup-temp/
+
+# Firebase private server credentials
+secrets/
+*service-account*.json
+*firebase-admin*.json
+
+# Runtime invoice/receipt uploads and Windows folder metadata
+/uploads/
+desktop.ini
