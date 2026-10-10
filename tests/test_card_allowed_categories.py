@@ -27,29 +27,18 @@ def test_employee_payment_cannot_bypass_card_categories_or_debit_balance(ctx, se
     ctx.db.add(employee); ctx.db.flush()
     service.access(settings_card, employee.id, True)
     tx = TransactionService(Context(ctx.db, employee))
-    from fastapi import HTTPException
-    from app.api.request.schema import FundRequestInput, RequestApprove, RequestSubmit
-    from app.api.request.service import FundRequestService
-    from datetime import datetime, timezone, timedelta
-    employee_ctx = Context(ctx.db, employee)
-    requests = FundRequestService(employee_ctx)
-    card = ctx.raw_card(settings_card)
-    payload = dict(pocket_id=card.pocket_id, card_id=card.id, payment_executor='EMPLOYEE_PAYMENT', explanation='Allowed advertising', request_type='PURCHASE', party_name='Merchant', total_amount=50, needed_by=datetime.now(timezone.utc)+timedelta(days=1))
-    with pytest.raises(HTTPException): requests.save(FundRequestInput(**payload, category='Salary'))
+    denied = tx.execute(settings_card, 50, 'Wrong category', uuid.uuid4(), category='Salary')
+    assert denied['status'] == 'DECLINED'
     assert FundingService(ctx).get()['balance'] == 1000
-    draft = requests.save(FundRequestInput(**payload, category='Marketing'))
-    requests.submit(draft['id'],RequestSubmit())
-    FundRequestService(ctx).approve(draft['id'],RequestApprove(card_id=card.id),uuid.uuid4())
-    # Changing the card policy after approval must still block payment.
     service.update(settings_card,CardUpdate(allowed_categories=['Operational']))
-    denied = tx.execute(settings_card, 50, 'Allowed advertising', uuid.uuid4(), category='Marketing', request_id=draft['id'])
+    denied = tx.execute(settings_card, 50, 'Allowed advertising', uuid.uuid4(), category='Marketing')
     assert denied['status'] == 'DECLINED'
     assert FundingService(ctx).get()['balance'] == 1000
     service.update(settings_card,CardUpdate(allowed_categories=['Marketing','Operational']))
-    key = uuid.uuid4()
-    paid = tx.execute(settings_card, 50, 'Allowed advertising', key, category='Marketing', request_id=draft['id'])
-    assert paid['status'] == 'APPROVED'
-    assert tx.execute(settings_card, 50, 'Allowed advertising', key, category='Marketing', request_id=draft['id'])['id'] == paid['id']
+    key=uuid.uuid4()
+    paid=tx.execute(settings_card,50,'Allowed advertising',key,category='Marketing')
+    assert paid['status']=='APPROVED'
+    assert tx.execute(settings_card,50,'Allowed advertising',key,category='Marketing')['id']==paid['id']
     assert FundingService(ctx).get()['balance'] == 950
     assert DashboardService(ctx).spending()['categories'][0]['category'] == 'Marketing'
 

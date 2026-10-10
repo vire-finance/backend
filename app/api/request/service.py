@@ -82,7 +82,8 @@ class FundRequestService:
             "display_id": f"REQ-{row.id.hex[:8].upper()}",
             "requester": {
                 "id": row.requester_id,
-                "name": requester.username if requester else None,
+                "name": (requester.full_name or requester.username) if requester else None,
+                "avatar_url": requester.avatar_url if requester else None,
             },
             "period_group": group,
         }
@@ -176,6 +177,7 @@ class FundRequestService:
 
     def save(self, payload, request_id=None):
         self.ctx.employee_only()
+        ensure(payload.payment_executor == "OWNER_PAYMENT", "Request invoice harus dibayar owner. Pembayaran langsung employee dilakukan melalui Payment.", 409)
         if payload.card_id:
             card = self.ctx.card(payload.card_id)
             ensure(card.pocket_id == payload.pocket_id, "Kartu tidak berada di pocket ini.")
@@ -200,10 +202,17 @@ class FundRequestService:
         if request_id:
             row = self.ctx.request(request_id)
             ensure(
-                row.status == FundRequestStatus.DRAFT,
-                "Hanya DRAFT yang dapat diubah.",
+                row.status == FundRequestStatus.DRAFT or (
+                    row.payment_executor == "EMPLOYEE_PAYMENT" and row.paid_at is None
+                    and row.status in (FundRequestStatus.PENDING_APPROVAL, FundRequestStatus.APPROVED)
+                ),
+                "Hanya DRAFT atau request lama yang belum dibayar dapat diubah.",
                 409,
             )
+            row.status = FundRequestStatus.DRAFT
+            row.receipt_status = None
+            row.reviewed_by = None
+            row.reviewed_at = None
             for name, value in data.items():
                 setattr(row, name, value)
             self.ctx.db.flush()
@@ -360,8 +369,9 @@ class FundRequestService:
 
         NotificationService(self.ctx).enqueue(
             self.ctx.owner_id, row.id,
-            "Fund Request baru",
-            f"{self.ctx.user.username} mengajukan {row.party_name}.",
+            f"Request Payment from {self.ctx.user.full_name or self.ctx.user.username}",
+            f"Please review {self.ctx.user.full_name or self.ctx.user.username}'s payment request on "
+            f"{self.ctx.raw_card(row.card_id).name if row.card_id else self.ctx.raw_pocket(row.pocket_id).name} Card.",
         )
 
         return self.ctx.commit(self.view(row, detail=True))
@@ -384,17 +394,7 @@ class FundRequestService:
             ensure(bool(row.recipient_account), "Alamat pembayaran merchant wajib tersedia.", 409)
             from app.api.transaction.service import TransactionService
             return TransactionService(self.ctx).execute(card.id, money(row.total_amount), row.explanation[:255], key, request_id=row.id, category=row.category, payment_method=row.payment_method, recipient_account=row.recipient_account)
-        ensure(row.category in card.allowed_categories, "Kategori tidak diizinkan pada kartu ini.", 409)
-        if row.status == FundRequestStatus.APPROVED:
-            return self.view(row, detail=True)
-        ensure(row.status == FundRequestStatus.PENDING_APPROVAL, "Request tidak menunggu approval.", 409)
-        row.card_id = card.id
-        row.status = FundRequestStatus.APPROVED
-        row.receipt_status = "AWAITING_PAYMENT"
-        row.reviewed_by = self.ctx.user.id
-        row.reviewed_at = now_utc()
-        NotificationService(self.ctx).enqueue(row.requester_id, row.id, "Purchase Request approved", "Request disetujui. Kamu sekarang dapat melakukan pembayaran.")
-        return self.ctx.commit(self.view(row, detail=True))
+        ensure(False, "Request lama harus dilengkapi invoice dan dikirim ulang oleh employee sebelum owner membayar.", 409)
 
     def reject(self, request_id, payload):
         self.ctx.owner_only()
@@ -418,7 +418,7 @@ class FundRequestService:
 
         NotificationService(self.ctx).enqueue(
             row.requester_id, row.id,
-            "Request ditolak", payload.reason,
+            "Your Request Was Rejected", "Please check the comment given to your request.",
         )
 
         return self.ctx.commit(self.view(row, detail=True))

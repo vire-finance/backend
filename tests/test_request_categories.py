@@ -35,17 +35,18 @@ def test_request_category_reaches_transaction_dashboard_and_ai(ctx, settings_car
     card.category = 'Salary'
     employee = employee_context(ctx, card.pocket_id)
     service = FundRequestService(employee)
-    draft = service.save(FundRequestInput(pocket_id=card.pocket_id, card_id=card.id, payment_executor='EMPLOYEE_PAYMENT', explanation='Employee wrote this reason', request_type='PURCHASE', category=category, party_name='Merchant', total_amount=50, needed_by=datetime.now(timezone.utc) + timedelta(days=1)))
+    draft = service.save(FundRequestInput(pocket_id=card.pocket_id, card_id=card.id, payment_executor='OWNER_PAYMENT', recipient_account='QR merchant', explanation='Employee wrote this reason', request_type='PURCHASE', category=category, party_name='Merchant', total_amount=50, needed_by=datetime.now(timezone.utc) + timedelta(days=1)))
     assert draft['category'] == category
+    doc=OCRDocument(user_id=employee.user.id,original_filename='invoice.png',stored_filename='invoice.png',storage_path='invoice.png',mime_type='image/png',file_size=100,ocr_status=OCRStatus.COMPLETED)
+    ctx.db.add(doc);ctx.db.flush()
+    service.attach(draft['id'],doc.id)
     service.submit(draft['id'], RequestSubmit())
     owner = FundRequestService(ctx)
     key = uuid.uuid4()
-    owner.approve(draft['id'], RequestApprove(card_id=card.id), key)
-    from app.api.transaction.service import TransactionService
-    result = TransactionService(employee).execute(card.id, 50, 'Employee wrote this reason', key, request_id=draft['id'], category=category)
+    result = owner.approve(draft['id'], RequestApprove(card_id=card.id), key)
     assert result['status'] == 'APPROVED'
     assert result['category'] == category
-    assert ctx.raw_card(card.id).balance == 550
+    assert ctx.raw_card(card.id).balance == 600
     from app.api.funding.service import FundingService
     assert FundingService(ctx).get()['balance'] == 950
     spending = DashboardService(ctx).spending()
