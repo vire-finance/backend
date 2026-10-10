@@ -20,7 +20,7 @@ def document(ctx, employee, name="invoice.png"):
     doc=OCRDocument(user_id=employee.user.id, original_filename=name, stored_filename=name, storage_path=name, mime_type="image/png", file_size=100, ocr_status=OCRStatus.PROCESSING)
     ctx.db.add(doc);ctx.db.flush();return doc
 
-def purchase(ctx, card_id, executor="EMPLOYEE_PAYMENT", category="Marketing", amount=50):
+def purchase(ctx, card_id, executor="OWNER_PAYMENT", category="Marketing", amount=50):
     card=ctx.raw_card(card_id);employee=employee_context(ctx, card.pocket_id)
     service=FundRequestService(employee)
     draft=service.save(FundRequestInput(pocket_id=card.pocket_id, card_id=card.id, payment_executor=executor, category=category, explanation="Buy business materials", request_type="PURCHASE", party_name="Merchant", total_amount=amount, payment_method="BANK_TRANSFER", recipient_account="BCA 123456", needed_by=datetime.now(timezone.utc)+timedelta(days=1)))
@@ -32,20 +32,17 @@ def pay(employee, request, key=None, **overrides):
     args=dict(card_id=request.card_id, amount=int(request.total_amount), description=request.explanation[:255], key=key or uuid.uuid4(), request_id=request.id, category=request.category, payment_method=request.payment_method, recipient_account=request.recipient_account)
     args.update(overrides);return TransactionService(employee).execute(**args)
 
-def test_employee_approval_does_not_debit_and_payment_is_once(ctx, settings_card):
+def test_employee_cannot_pay_invoice_request(ctx, settings_card):
     employee,request=purchase(ctx,settings_card)
-    assert pay(employee,request)['status']=='DECLINED'
-    FundRequestService(ctx).approve(request.id,RequestApprove(card_id=settings_card),uuid.uuid4())
+    with pytest.raises(HTTPException): pay(employee,request)
     assert FundingService(ctx).get()['balance']==1000
-    assert request.receipt_status=='AWAITING_PAYMENT'
-    key=uuid.uuid4();first=pay(employee,request,key)
-    assert first['status']=='APPROVED'
-    assert pay(employee,request,key)['id']==first['id']
-    assert pay(employee,request)['status']=='DECLINED'
+    key=uuid.uuid4()
+    service=FundRequestService(ctx)
+    result=service.approve(request.id,RequestApprove(card_id=settings_card),key)
+    assert result['status']=='APPROVED'
+    assert request.paid_at and request.status.value=='COMPLETED'
+    assert service.approve(request.id,RequestApprove(card_id=settings_card),key)['id']==result['id']
     assert FundingService(ctx).get()['balance']==950
-    assert ctx.raw_card(settings_card).balance==550
-    assert request.receipt_status=='AWAITING_RECEIPT'
-    assert request.completed_at is None
 
 def test_owner_invoice_payment_can_exceed_card_budget_and_category(ctx, settings_card):
     card=ctx.raw_card(settings_card);card.allowed_categories=['Marketing']
@@ -73,20 +70,25 @@ def test_rejected_request_and_changed_payment_details_are_blocked(ctx, settings_
     employee,request=purchase(ctx,settings_card)
     owner=FundRequestService(ctx)
     owner.reject(request.id,RequestReject(reason='Not needed'))
-    assert pay(employee,request)['status']=='DECLINED'
+    assert request.rejection_reason=='Not needed'
+    notice=ctx.db.scalar(select(Notification).where(Notification.request_id==request.id,Notification.user_id==employee.user.id))
+    assert notice.title=='Your Request Was Rejected'
+    assert notice.message=='Please check the comment given to your request.'
+    with pytest.raises(HTTPException): pay(employee,request)
     assert FundingService(ctx).get()['balance']==1000
 
 @pytest.mark.parametrize('change',[{'category':'Salary'},{'recipient_account':'Other 999'},{'payment_method':'QRIS'},{'description':'Different purchase'},{'amount':51}])
 def test_payment_cannot_change_approved_details(ctx, settings_card, change):
     employee,request=purchase(ctx,settings_card)
-    FundRequestService(ctx).approve(request.id,RequestApprove(card_id=settings_card),uuid.uuid4())
-    try:result=pay(employee,request,**change);assert result['status']=='DECLINED'
+    try:result=pay(ctx,request,**change);assert result['status']=='DECLINED'
     except HTTPException:pass
     assert FundingService(ctx).get()['balance']==1000
 
 def test_receipt_overdue_notifies_once_and_review_closes_without_new_debit(ctx, settings_card):
-    employee,request=purchase(ctx,settings_card)
-    owner=FundRequestService(ctx);owner.approve(request.id,RequestApprove(card_id=settings_card),uuid.uuid4());pay(employee,request)
+    employee=employee_context(ctx,ctx.raw_card(settings_card).pocket_id)
+    result=TransactionService(employee).execute(settings_card,50,'Materials',uuid.uuid4(),category='Marketing')
+    request=ctx.db.get(FundRequest,result['fund_request_id'])
+    owner=FundRequestService(ctx)
     request.receipt_due_at=datetime.utcnow()-timedelta(hours=1);ctx.db.commit()
     overdue_reminders(ctx.db);overdue_reminders(ctx.db)
     notifications=ctx.db.scalars(select(Notification).where(Notification.request_id==request.id,Notification.title=='Receipt overdue')).all()
@@ -104,7 +106,7 @@ def test_receipt_overdue_notifies_once_and_review_closes_without_new_debit(ctx, 
 
 def test_receipt_before_payment_is_blocked(ctx, settings_card):
     employee,request=purchase(ctx,settings_card)
-    with pytest.raises(HTTPException):FundRequestService(employee).submit_receipt(request.id,ReceiptSubmit(document_id=document(ctx,employee).id))
+    with pytest.raises(HTTPException):FundRequestService(employee).submit_receipt(request.id,ReceiptSubmit(document_id=document(ctx,employee,'unpaid-receipt.png').id))
 
 def test_owner_payment_cash_shortage_keeps_request_pending(ctx, settings_card):
     employee,request=purchase(ctx,settings_card,'OWNER_PAYMENT')
@@ -114,9 +116,35 @@ def test_owner_payment_cash_shortage_keeps_request_pending(ctx, settings_card):
     assert request.status.value=='PENDING_APPROVAL' and request.paid_at is None
     assert FundingService(ctx).get()['balance']==25
 
-def test_employee_request_over_monthly_limit_requires_owner_invoice_route(ctx, settings_card):
-    card=ctx.raw_card(settings_card);card.monthly_limit=20
-    with pytest.raises(HTTPException):purchase(ctx,settings_card)
+def test_manual_employee_payment_request_is_retired(ctx, settings_card):
+    card=ctx.raw_card(settings_card);employee=employee_context(ctx,card.pocket_id)
+    with pytest.raises(HTTPException):
+        FundRequestService(employee).save(FundRequestInput(pocket_id=card.pocket_id,card_id=card.id,
+            payment_executor='EMPLOYEE_PAYMENT',explanation='Old approval flow',request_type='PURCHASE',
+            party_name='Merchant',total_amount=50,needed_by=datetime.now(timezone.utc)+timedelta(days=1)))
+    assert FundingService(ctx).get()['balance']==1000
+
+
+def test_legacy_approved_request_can_be_resubmitted_with_invoice(ctx, settings_card):
+    from app.shared.enums import FundRequestStatus
+    card=ctx.raw_card(settings_card);employee=employee_context(ctx,card.pocket_id)
+    row=FundRequest(requester_id=employee.user.id,pocket_id=card.pocket_id,card_id=card.id,
+        payment_executor='EMPLOYEE_PAYMENT',explanation='Old request',request_type='PURCHASE',
+        category='Marketing',party_name='Merchant',total_amount=50,payment_method='BANK_TRANSFER',
+        recipient_account='BCA 123',needed_by=datetime.utcnow()+timedelta(days=1),
+        status=FundRequestStatus.APPROVED,receipt_status='AWAITING_PAYMENT')
+    ctx.db.add(row);ctx.db.commit()
+    with pytest.raises(HTTPException): pay(employee,row)
+    service=FundRequestService(employee)
+    service.save(FundRequestInput(pocket_id=card.pocket_id,card_id=card.id,
+        payment_executor='OWNER_PAYMENT',explanation='New invoice request',request_type='PURCHASE',
+        category='Marketing',party_name='Merchant',total_amount=50,payment_method='BANK_TRANSFER',
+        recipient_account='BCA 123',needed_by=datetime.now(timezone.utc)+timedelta(days=1)),row.id)
+    service.attach(row.id,document(ctx,employee).id)
+    service.submit(row.id,RequestSubmit())
+    FundRequestService(ctx).approve(row.id,RequestApprove(card_id=card.id),uuid.uuid4())
+    assert row.status.value=='COMPLETED' and row.receipt_status=='INVOICE_PAID'
+    assert FundingService(ctx).get()['balance']==950
 
 def test_owner_invoice_payment_does_not_consume_employee_monthly_budget(ctx, settings_card):
     from app.api.transaction.repository import TransactionRepository
@@ -151,3 +179,30 @@ def test_push_outbox_retries_without_blocking_purchase(ctx, settings_card, monke
     worker.dispatch(ctx.db)
     assert event.push_processed and event.push_attempts==2
     assert FundingService(ctx).get()['balance']==1000
+
+
+def test_submission_notifies_owner_once_and_wakes_push_worker(ctx, settings_card):
+    from app.api.notification.service import notification_wakeup
+    notification_wakeup.clear()
+    employee,request=purchase(ctx,settings_card)
+    assert notification_wakeup.is_set()
+    FundRequestService(employee).submit(request.id,RequestSubmit())
+    events=ctx.db.scalars(select(Notification).where(Notification.request_id==request.id,Notification.user_id==ctx.owner_id)).all()
+    assert len(events)==1
+    assert events[0].title==f"Request Payment from {employee.user.username}"
+    assert ctx.raw_card(settings_card).name in events[0].message
+    assert not events[0].push_processed
+    assert FundingService(ctx).get()['balance']==1000
+
+
+def test_notification_wakeup_waits_for_commit(ctx, settings_card):
+    from app.api.notification.service import notification_wakeup, NotificationService
+    notification_wakeup.clear()
+    NotificationService(ctx).enqueue(ctx.user.id,None,'Test','Commit first')
+    assert not notification_wakeup.is_set()
+    ctx.db.commit()
+    assert notification_wakeup.is_set()
+    notification_wakeup.clear()
+    NotificationService(ctx).enqueue(ctx.user.id,None,'Rollback','Never dispatch')
+    ctx.db.rollback()
+    assert not notification_wakeup.is_set()

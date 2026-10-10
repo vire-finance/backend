@@ -58,7 +58,7 @@ class TransactionService:
                 from app.api.request.repository import FundRequestRepository
                 ensure(bool(FundRequestRepository(ctx.db).documents(request.id)), "Invoice wajib tersedia.", 409)
             else:
-                ensure(ctx.user.id == request.requester_id, "Hanya pengaju yang dapat membayar request.", 403)
+                ensure(False, "Pembayaran request invoice hanya dapat dilakukan owner. Gunakan Payment untuk transaksi langsung.", 409)
             ensure(request.pocket_id == card.pocket_id and request.card_id in (None, card.id), "Kartu berbeda dari request.", 409)
             ensure(category in (None, request.category) and description == request.explanation[:255], "Detail pembelian berbeda dari request.", 409)
             ensure(payment_method == request.payment_method and recipient_account == request.recipient_account, "Tujuan/metode pembayaran berbeda dari request.", 409)

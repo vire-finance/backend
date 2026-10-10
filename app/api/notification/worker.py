@@ -1,4 +1,5 @@
 """Durable notification outbox and overdue reminders; never blocks payments."""
+from app.api.notification.service import notification_wakeup
 import asyncio
 import logging
 from datetime import timedelta
@@ -64,4 +65,5 @@ async def run_worker():
     while True:
         try: await asyncio.to_thread(tick)
         except Exception as error: logger.warning("Notification worker retry (%s)", type(error).__name__)
-        await asyncio.sleep(10)
+        await asyncio.to_thread(notification_wakeup.wait, 10)
+        notification_wakeup.clear()

@@ -1,3 +1,18 @@
+from threading import Event
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
+notification_wakeup = Event()
+
+@event.listens_for(Session, "after_commit")
+def wake_notification_worker(session):
+    if session.info.pop("new_push_notification", False):
+        notification_wakeup.set()
+
+@event.listens_for(Session, "after_rollback")
+def clear_notification_wakeup(session):
+    session.info.pop("new_push_notification", None)
+
 from app.api.notification.model import Notification
 from app.api.notification.repository import NotificationRepository
 from app.shared.utils import ensure, fields
@@ -8,6 +23,7 @@ class NotificationService:
         self.repo = NotificationRepository(ctx.db)
 
     def enqueue(self, user_id, request_id, title, message):
+        self.ctx.db.info["new_push_notification"] = True
         self.ctx.db.add(
             Notification(
                 user_id=user_id,

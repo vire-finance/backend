@@ -58,15 +58,8 @@ def test_employee_payment_uses_owner_main_account(ctx, settings_card):
     ctx.db.flush()
     ctx.db.add(PocketAccess(pocket_id=card.pocket_id, employee_id=employee.id))
     ctx.db.flush()
-    from app.api.request.schema import FundRequestInput, RequestApprove, RequestSubmit
-    from app.api.request.service import FundRequestService
-    from datetime import datetime, timezone, timedelta
     employee_ctx = Context(ctx.db, employee)
-    service = FundRequestService(employee_ctx)
-    request = service.save(FundRequestInput(pocket_id=card.pocket_id, card_id=card.id, payment_executor='EMPLOYEE_PAYMENT', explanation='Employee QR', category='Others', request_type='PURCHASE', party_name='Merchant', total_amount=50, needed_by=datetime.now(timezone.utc)+timedelta(days=1)))
-    service.submit(request['id'],RequestSubmit())
-    FundRequestService(ctx).approve(request['id'],RequestApprove(card_id=card.id),uuid.uuid4())
-    result = TransactionService(employee_ctx).execute(settings_card, 50, 'Employee QR', uuid.uuid4(), request_id=request['id'])
+    result = TransactionService(employee_ctx).execute(settings_card, 50, 'Employee QR', uuid.uuid4(), category='Others')
     assert result['status'] == 'APPROVED'
     assert FundingService(ctx).get()['balance'] == 950
 
