@@ -17,9 +17,10 @@ class CardService:
         pocket = self.ctx.raw_pocket(row.pocket_id)
         result = {
             **fields(
-                row, "id", "pocket_id", "name", "category",
+                row, "id", "pocket_id", "name", "category", "allowed_categories",
                 "theme", "status", "network", "last_four_digits",
                 "balance", "expiry_month", "expiry_year",
+                "expires_on", "usage_type", "single_use_consumed_at",
             ),
             "pocket_name": pocket.name,
             "masked_number": f"SIM •••• •••• {row.last_four_digits}",
@@ -45,6 +46,8 @@ class CardService:
                     employees.append({
                         "id": employee.id,
                         "name": employee.username,
+                        "full_name": employee.full_name or employee.username,
+                        "avatar_url": employee.avatar_url,
                         "direct_access": direct,
                         "inherited_from_pocket": inherited,
                     })
@@ -85,11 +88,14 @@ class CardService:
 
         now = local_time(now_utc())
 
+        if payload.expires_on is not None:
+            ensure(payload.expires_on >= now.date(), "Tanggal kedaluwarsa tidak boleh di masa lalu.")
         row = self.repo.add(
             Card(
                 pocket_id=pocket.id,
                 name=payload.name,
                 category=payload.category,
+                allowed_categories=payload.allowed_categories,
                 theme=payload.theme,
                 balance=payload.initial_balance,
                 spent=0,
@@ -97,8 +103,10 @@ class CardService:
                 status=CardStatus.ACTIVE,
                 network="VISA",
                 last_four_digits=f"{secrets.randbelow(10000):04d}",
-                expiry_month=now.month,
-                expiry_year=now.year + 3,
+                expiry_month=payload.expires_on.month if payload.expires_on else now.month,
+                expiry_year=payload.expires_on.year if payload.expires_on else now.year + 3,
+                expires_on=payload.expires_on,
+                usage_type=payload.usage_type,
             )
         )
         return self.ctx.commit(self.view(row, detail=True))
@@ -108,6 +116,15 @@ class CardService:
         row = self.ctx.raw_card(card_id)
         pocket = self.ctx.raw_pocket(row.pocket_id)
         changes = payload.model_dump(exclude_unset=True)
+
+        if "expires_on" in changes:
+            expiry = changes["expires_on"]
+            ensure(expiry >= local_time(now_utc()).date(), "Tanggal kedaluwarsa tidak boleh di masa lalu.")
+            changes["expiry_month"] = expiry.month
+            changes["expiry_year"] = expiry.year
+        if "usage_type" in changes:
+            ensure(row.single_use_consumed_at is None or changes["usage_type"] == row.usage_type,
+                   "Kartu single use yang sudah dipakai tidak dapat diubah jenisnya.", 409)
 
         if "balance" in changes:
             ensure(
@@ -129,6 +146,13 @@ class CardService:
                 409,
             )
 
+        if "blocked" in changes:
+            blocked = changes.pop("blocked")
+            if blocked:
+                row.status = CardStatus.NONACTIVE
+            elif row.status == CardStatus.NONACTIVE:
+                row.status = CardStatus.ACTIVE
+
         for key, value in changes.items():
             setattr(row, key, value)
 
@@ -138,6 +162,8 @@ class CardService:
     def set_status(self, card_id, payload):
         self.ctx.owner_only()
         row = self.ctx.raw_card(card_id)
+        ensure(row.status != CardStatus.NONACTIVE or payload.status == CardStatus.NONACTIVE,
+               "Buka blokir melalui Card Settings terlebih dahulu.", 409)
         row.status = payload.status
         return self.ctx.commit(self.view(row, detail=True))
 
