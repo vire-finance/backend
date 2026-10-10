@@ -1,6 +1,7 @@
 from sqlalchemy import func, select
 
 from app.api.card.model import Card
+from app.api.request.model import FundRequest
 from app.api.pocket.model import Pocket
 from app.api.transaction.model import Transaction
 from app.shared.repository import Repository
@@ -27,6 +28,8 @@ class TransactionRepository(Repository):
             func.coalesce(func.sum(Transaction.amount), 0)
         ).where(
             Transaction.status == "APPROVED",
+            ~select(FundRequest.id).where(FundRequest.id == Transaction.fund_request_id,
+                FundRequest.payment_executor == "OWNER_PAYMENT", FundRequest.receipt_status.is_not(None)).exists(),
             Transaction.processed_at >= start,
             Transaction.processed_at < end,
         )
@@ -77,7 +80,7 @@ class TransactionRepository(Repository):
         )
 
         if category:
-            statement = statement.where(Card.category == category)
+            statement = statement.where(func.coalesce(Transaction.category, Card.category, "Others") == category)
 
         total, card_count = self.db.execute(statement).one()
         return money(total), card_count

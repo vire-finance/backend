@@ -2,6 +2,7 @@ import csv
 import io
 from collections import Counter
 
+from app.api.funding.service import FundingService
 from app.api.card.service import CardService
 from app.api.pocket.model import Pocket, PocketAccess
 from app.api.pocket.repository import PocketRepository
@@ -61,6 +62,7 @@ class PocketService:
                 ),
             )
         )
+        FundingService(self.ctx).adjust_pocket(row, payload.allocated_amount)
         return self.ctx.commit(self.view(row))
 
     def update(self, pocket_id, payload):
@@ -75,6 +77,7 @@ class PocketService:
                 "Budget baru lebih kecil dari dana yang sudah digunakan.",
                 409,
             )
+            FundingService(self.ctx).adjust_pocket(row, changes["allocated_amount"] - row.allocated_amount)
             row.remaining_amount = changes["allocated_amount"] - used
 
         if "monthly_limit" in changes:
