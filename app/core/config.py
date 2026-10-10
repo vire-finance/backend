@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     # None preserves legacy LLM_ENDPOINT opt-in; "disabled" explicitly stops calls.
     LLM_PROVIDER: str | None = None
     LLM_BASE_URL: str = ""
+    # False disables Qwen3 reasoning; null omits the option for other runtimes.
+    LLM_THINKING: bool | None = False
     LLM_TIMEOUT: float = Field(default=30, ge=1, le=120)
     AI_INSIGHT_CACHE_TTL_SECONDS: int = Field(default=300, ge=1, le=3600)
     AI_INSIGHT_FAILURE_TTL_SECONDS: int = Field(default=30, ge=1, le=300)
@@ -31,6 +33,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",
     ]
+
+    @field_validator("LLM_THINKING", mode="before")
+    @classmethod
+    def optional_thinking(cls, value):
+        return None if isinstance(value, str) and value.strip().lower() == "null" else value
 
     model_config = SettingsConfigDict(
         env_file=".env",

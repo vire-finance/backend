@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import re
 from threading import Lock
 import time
 
@@ -67,7 +68,7 @@ def cache_key(owner_id, analytics):
     data["budget"].pop("as_of")
     # Changing model/provider/auth configuration also invalidates cached results.
     config = {name: getattr(settings, name) for name in
-              ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_ENDPOINT", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT")}
+              ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_ENDPOINT", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT", "LLM_THINKING")}
     digest = hashlib.sha256(json.dumps({"metrics": data, "config": config}, sort_keys=True,
                                       ensure_ascii=False, allow_nan=False).encode()).hexdigest()
     return str(owner_id), digest
@@ -77,34 +78,74 @@ def financial_evidence(analytics):
     data = analytics.model_dump(mode="json")
     # Aggregates only. No email, actor IDs, transaction descriptions, receipts or raw OCR.
     evidence = {key: data[key] for key in ("currency", "is_simulated", "period", "previous_period",
-                "summary", "monthly_trend", "budget", "overall_status", "data_availability")}
+                "summary", "monthly_trend", "budget", "overall_status")}
+    evidence["budget"] = {key: data["budget"][key] for key in ("scope", "allocated_amount",
+        "used_amount", "remaining_amount", "utilization_percentage", "current_limit_period",
+        "monthly_limit", "current_month_spent", "current_month_limit_utilization_percentage")}
+    availability = data["data_availability"]
+    evidence["data_availability"] = {key: value for key, value in availability.items()
+                                     if not key.endswith("_reason") and key != "category_basis"}
+    evidence["data_availability"]["note"] = (
+        "No departments or historical budget snapshots; categories are current Card categories."
+    )
     refs = {"summary", "budget", "data_availability"}
+    limits = {"pocket_breakdown": 1, "card_breakdown": 3, "category_breakdown": 3, "signals": 1}
+    common = ("amount", "percentage", "previous_period_amount", "change_percentage")
     for key, kind in (("pocket_breakdown", "pocket"), ("card_breakdown", "card")):
-        evidence[key] = data[key][:10]
+        fields = ("id", "name", *common, "current_monthly_limit", "current_month_spent",
+                  "current_month_limit_utilization_percentage")
+        if kind == "pocket":
+            fields += ("current_allocated_amount", "current_remaining_amount")
+        evidence[key] = [{field: row[field] for field in fields}
+                         for row in data[key][:limits[key]]]
         refs.update(f"{kind}:{row['id']}" for row in evidence[key])
-    evidence["category_breakdown"] = data["category_breakdown"][:10]
+    evidence["category_breakdown"] = [{field: row[field] for field in ("category", "label", *common)}
+                                      for row in data["category_breakdown"][:limits["category_breakdown"]]]
     refs.update(f"category:{row['category'] if row['category'] is not None else '<uncategorized>'}"
                 for row in evidence["category_breakdown"])
-    # Transaction outliers are already quantified rule evidence, not transaction history.
-    evidence["signals"] = data["signals"][:20]
+    # Limit interpretation context for the small local model, keeping the full
+    # deterministic breakdowns and rule list in the public analytics response.
+    fields = ("id", "rule", "severity", "title", "current_value", "previous_value",
+              "change_percentage", "threshold", "recommended_action", "evidence_refs")
+    evidence["signals"] = [{field: signal[field] for field in fields}
+                           for signal in data["signals"][:limits["signals"]]]
     for signal in evidence["signals"]:
         refs.add(f"signal:{signal['id']}")
         refs.update(signal["evidence_refs"])
     evidence["evidence_refs"] = sorted(refs)
-    evidence["truncated"] = {key: len(data[key]) > len(evidence[key]) for key in
-                            ("pocket_breakdown", "card_breakdown", "category_breakdown", "signals")}
+    evidence["truncated"] = {key: len(data[key]) > len(evidence[key]) for key in limits}
+
     return evidence
 
 
 def validated_narrative(value, evidence):
     # Revalidate even if a future provider returns a plain dictionary or model.
-    narrative = FinancialNarrative.model_validate(value.model_dump() if isinstance(value, FinancialNarrative) else value)
+    narrative = FinancialNarrative.model_validate_json(json.dumps(
+        value.model_dump(mode="json") if isinstance(value, FinancialNarrative) else value,
+        allow_nan=False), strict=True)
     if narrative.overall_status.value != evidence["overall_status"]:
         raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
     refs = set(evidence["evidence_refs"])
     for insight in narrative.insights:
         if not set(insight.evidence_refs).issubset(refs):
             raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
+        # Alert severity belongs to deterministic rules. Referencing a card alone
+        # cannot turn its spending share into an alert.
+        levels = {"info": 0, "attention": 1, "warning": 2}
+        signals = {f"signal:{s['id']}": s for s in evidence["signals"]}
+        cited = [signals[ref] for ref in insight.evidence_refs if ref in signals]
+        expected = max((s["severity"] for s in cited), key=levels.get, default="info")
+        if insight.severity.value != expected:
+            raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
+        # Current rules never prescribe numerical reduction targets. Reject such
+        # recommendations rather than silently laundering them into trusted cards.
+        if re.search(r"\d|[%\uff05]", insight.recommended_action):
+            raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
+    texts = [narrative.headline, narrative.summary]
+    texts.extend(text for item in narrative.insights for text in
+                 (item.title, item.description, item.recommended_action))
+    if any("<think" in text.lower() or "</think" in text.lower() for text in texts):
+        raise ProviderError("LLM_INVALID_OUTPUT")
     return narrative
 
 
@@ -138,9 +179,10 @@ class OwnerInsightService:
                     ai = AIAnalysis(fallback_reason="LLM_INVALID_OUTPUT")
                 finally:
                     try:
-                        ttl = (settings.AI_INSIGHT_CACHE_TTL_SECONDS if ai.available
-                               else settings.AI_INSIGHT_FAILURE_TTL_SECONDS)
-                        insight_cache.store(key, ai, ttl)
+                        if ai is not None:
+                            ttl = (settings.AI_INSIGHT_CACHE_TTL_SECONDS if ai.available
+                                   else settings.AI_INSIGHT_FAILURE_TTL_SECONDS)
+                            insight_cache.store(key, ai, ttl)
                     finally:
                         insight_cache.release(key)
         return OwnerInsightsResponse(**analytics.model_dump(), ai_analysis=ai)

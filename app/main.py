@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,11 +22,20 @@ from app.api.dashboard.router import router as dashboard_router
 from app.api.history.router import router as history_router
 from app.api.ai.router import router as ai_router
 from app.core.config import settings
+from app.api.ai.provider import close_inference_client
 
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="VIRE API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        yield
+    finally:
+        close_inference_client()
+
+
+app = FastAPI(title="VIRE API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
