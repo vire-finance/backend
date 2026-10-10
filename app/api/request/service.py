@@ -7,7 +7,9 @@ from app.api.auth.model import User
 from app.api.notification.service import NotificationService
 from app.api.request.model import FundRequest
 from app.api.request.repository import FundRequestRepository
-from app.api.transaction.service import TransactionService
+from sqlalchemy import select
+from app.api.transaction.model import Transaction
+from app.api.ocr.model import OCRDocument
 from app.core.config import settings
 from app.shared.enums import FundRequestStatus, OCRStatus
 from app.shared.schema import MAX_MONEY
@@ -70,10 +72,12 @@ class FundRequestService:
 
         result = {
             **fields(
-                row, "id", "pocket_id", "explanation", "request_type",
+                row, "id", "pocket_id", "explanation", "request_type", "category",
                 "party_name", "total_amount", "needed_by", "status",
                 "rejection_reason", "reviewed_by", "reviewed_at",
-                "completed_at", "created_at",
+                "completed_at", "created_at", "card_id", "payment_method",
+                "recipient_account", "payment_executor", "receipt_status", "paid_at", "receipt_due_at",
+                "receipt_note", "receipt_review_reason",
             ),
             "display_id": f"REQ-{row.id.hex[:8].upper()}",
             "requester": {
@@ -83,7 +87,15 @@ class FundRequestService:
             "period_group": group,
         }
 
+        card = self.ctx.raw_card(row.card_id) if row.card_id else None
+        result["card"] = {"id": card.id, "name": card.name, "last_four_digits": card.last_four_digits} if card else None
+        result["workflow_status"] = self.workflow_status(row)
+        transaction = self.ctx.db.scalar(select(Transaction).where(Transaction.fund_request_id == row.id, Transaction.status == "APPROVED"))
+        result["transaction_id"] = transaction.id if transaction else None
         if detail:
+            receipt = self.ctx.db.get(OCRDocument, row.receipt_document_id) if row.receipt_document_id else None
+            result["receipt"] = ({"id": receipt.id, "file_name": receipt.original_filename,
+                "download_url": f"/fund-requests/{row.id}/receipt/file"} if receipt else None)
             result["ai_analysis"] = {
                 "method": "HEURISTIC",
                 "summary": self.analysis(row),
@@ -164,7 +176,21 @@ class FundRequestService:
 
     def save(self, payload, request_id=None):
         self.ctx.employee_only()
-        self.ctx.pocket(payload.pocket_id)
+        if payload.card_id:
+            card = self.ctx.card(payload.card_id)
+            ensure(card.pocket_id == payload.pocket_id, "Kartu tidak berada di pocket ini.")
+            if payload.payment_executor == "EMPLOYEE_PAYMENT":
+                ensure(payload.category in card.allowed_categories, "Kategori tidak diizinkan kartu ini.")
+                pocket = self.ctx.raw_pocket(card.pocket_id)
+                from app.api.transaction.repository import TransactionRepository
+                usage = TransactionRepository(self.ctx.db)
+                ensure(card.balance >= payload.total_amount and pocket.remaining_amount >= payload.total_amount
+                       and usage.spent(card_id=card.id) + payload.total_amount <= card.monthly_limit
+                       and usage.spent(pocket_id=pocket.id) + payload.total_amount <= pocket.monthly_limit,
+                       "Budget/monthly limit tidak cukup. Gunakan Owner Payment Request.", 409)
+        else:
+            self.ctx.pocket(payload.pocket_id)
+        ensure(payload.payment_method == "QRIS" or payload.recipient_account, "Rekening/nomor tujuan transfer wajib diisi.")
 
         data = payload.model_dump()
         data["needed_by"] = payload.needed_by.astimezone(
@@ -218,7 +244,7 @@ class FundRequestService:
             "party_name": doc.extracted_other_party_name,
             "total_amount": int(amount) if usable else None,
             "extracted_total_amount": str(amount) if amount is not None else None,
-            "explanation": (doc.raw_ocr_text or "")[:5000],
+            "explanation": None,
             "document_date": doc.extracted_date,
             "requires_user_review": True,
         }
@@ -226,7 +252,10 @@ class FundRequestService:
     def attach(self, request_id, document_id, remove=False):
         self.ctx.employee_only()
         row = self.ctx.request(request_id)
-        self.ctx.pocket(row.pocket_id)
+        if row.card_id:
+            self.ctx.card(row.card_id)
+        else:
+            self.ctx.pocket(row.pocket_id)
 
         ensure(
             row.status == FundRequestStatus.DRAFT,
@@ -292,7 +321,10 @@ class FundRequestService:
             "Hanya DRAFT yang dapat disubmit.",
             409,
         )
-        self.ctx.pocket(row.pocket_id)
+        if row.card_id:
+            self.ctx.card(row.card_id)
+        else:
+            self.ctx.pocket(row.pocket_id)
 
         ensure(
             row.needed_by > now_utc(),
@@ -300,7 +332,11 @@ class FundRequestService:
             409,
         )
 
-        for doc in self.repo.documents(row.id):
+        docs = self.repo.documents(row.id)
+        if row.payment_executor == "OWNER_PAYMENT":
+            ensure(bool(docs), "Invoice wajib dilampirkan sebelum Owner Payment Request dikirim.", 409)
+            ensure(bool(row.recipient_account), "Alamat pembayaran merchant wajib diisi.", 409)
+        for doc in ([] if row.payment_executor == "OWNER_PAYMENT" else docs):
             ensure(
                 doc.ocr_status not in (
                     OCRStatus.PENDING, OCRStatus.PROCESSING,
@@ -340,13 +376,25 @@ class FundRequestService:
             403,
         )
 
-        return TransactionService(self.ctx).execute(
-            card_id=payload.card_id,
-            amount=money(row.total_amount),
-            description=f"Fund Request {row.id}: {row.party_name}"[:255],
-            key=key,
-            request_id=row.id,
-        )
+        card = self.ctx.card(payload.card_id)
+        ensure(row.card_id in (None, card.id) and card.pocket_id == row.pocket_id, "Kartu berbeda dari pengajuan.", 409)
+        ensure(self.ctx.can_card(card, self.ctx.employee(row.requester_id)), "Employee tidak memiliki akses kartu.", 403)
+        if row.payment_executor == "OWNER_PAYMENT":
+            ensure(bool(self.repo.documents(row.id)), "Invoice wajib tersedia sebelum pembayaran.", 409)
+            ensure(bool(row.recipient_account), "Alamat pembayaran merchant wajib tersedia.", 409)
+            from app.api.transaction.service import TransactionService
+            return TransactionService(self.ctx).execute(card.id, money(row.total_amount), row.explanation[:255], key, request_id=row.id, category=row.category, payment_method=row.payment_method, recipient_account=row.recipient_account)
+        ensure(row.category in card.allowed_categories, "Kategori tidak diizinkan pada kartu ini.", 409)
+        if row.status == FundRequestStatus.APPROVED:
+            return self.view(row, detail=True)
+        ensure(row.status == FundRequestStatus.PENDING_APPROVAL, "Request tidak menunggu approval.", 409)
+        row.card_id = card.id
+        row.status = FundRequestStatus.APPROVED
+        row.receipt_status = "AWAITING_PAYMENT"
+        row.reviewed_by = self.ctx.user.id
+        row.reviewed_at = now_utc()
+        NotificationService(self.ctx).enqueue(row.requester_id, row.id, "Purchase Request approved", "Request disetujui. Kamu sekarang dapat melakukan pembayaran.")
+        return self.ctx.commit(self.view(row, detail=True))
 
     def reject(self, request_id, payload):
         self.ctx.owner_only()
@@ -374,3 +422,48 @@ class FundRequestService:
         )
 
         return self.ctx.commit(self.view(row, detail=True))
+    @staticmethod
+    def workflow_status(row):
+        if row.receipt_status in ("AWAITING_RECEIPT", "NEEDS_CLARIFICATION") and row.receipt_due_at and row.receipt_due_at < now_utc():
+            return "RECEIPT_OVERDUE"
+        return row.receipt_status or row.status.value
+
+    def submit_receipt(self, request_id, payload):
+        self.ctx.employee_only()
+        row = self.ctx.request(request_id)
+        ensure(row.paid_at is not None and row.status == FundRequestStatus.APPROVED, "Request belum dibayar atau sudah closed.", 409)
+        ensure(row.receipt_status in ("AWAITING_RECEIPT", "NEEDS_CLARIFICATION", "RECEIPT_SUBMITTED"), "Receipt tidak dapat diubah.", 409)
+        doc = self.repo.document(payload.document_id, lock=True)
+        ensure(doc is not None and doc.user_id == self.ctx.user.id, "Dokumen tidak ditemukan.", 404)
+        ensure(doc.fund_request_id in (None, row.id), "Dokumen sudah dipakai request lain.", 409)
+        ensure(not self.ctx.db.scalar(select(FundRequest.id).where(FundRequest.receipt_document_id == doc.id, FundRequest.id != row.id)), "Receipt sudah digunakan request lain.", 409)
+        if row.receipt_document_id == doc.id and row.receipt_status == "RECEIPT_SUBMITTED" and row.receipt_note == payload.note:
+            return self.view(row, detail=True)
+        doc.fund_request_id = row.id
+        row.receipt_document_id = doc.id
+        row.receipt_note = payload.note
+        row.receipt_status = "RECEIPT_SUBMITTED"
+        NotificationService(self.ctx).enqueue(self.ctx.owner_id, row.id, "Receipt ready for review", f"{self.ctx.user.username} mengunggah bukti untuk {row.party_name}.")
+        return self.ctx.commit(self.view(row, detail=True))
+
+    def review_receipt(self, request_id, payload):
+        self.ctx.owner_only()
+        row = self.ctx.request(request_id)
+        ensure(row.status == FundRequestStatus.APPROVED and row.receipt_status == "RECEIPT_SUBMITTED" and row.receipt_document_id, "Receipt belum tersedia untuk review.", 409)
+        ensure(payload.decision != "NEEDS_CLARIFICATION" or payload.reason.strip(), "Alasan klarifikasi wajib diisi.")
+        row.receipt_status = payload.decision
+        row.receipt_review_reason = payload.reason
+        if payload.decision == "VERIFIED":
+            row.status = FundRequestStatus.COMPLETED
+            row.completed_at = now_utc()
+        else:
+            from datetime import timedelta
+            row.receipt_due_at = now_utc() + timedelta(hours=48)
+            row.receipt_overdue_notified = False
+        NotificationService(self.ctx).enqueue(row.requester_id, row.id, "Receipt review", payload.reason or "Receipt verified. Purchase Request closed.")
+        return self.ctx.commit(self.view(row, detail=True))
+
+    def receipt_file(self, request_id):
+        row = self.ctx.request(request_id)
+        ensure(row.receipt_document_id is not None, "Receipt belum tersedia.", 404)
+        return self.document_file(request_id, row.receipt_document_id)
