@@ -13,7 +13,7 @@ class TopUp(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "simulated_topups"
 
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    pocket_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pockets.id"), nullable=False, index=True)
+    pocket_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("pockets.id"), nullable=True, index=True)
     idempotency_key: Mapped[uuid.UUID] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     method: Mapped[str] = mapped_column(String(20), nullable=False)
