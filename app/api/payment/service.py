@@ -3,6 +3,7 @@ import io
 import qrcode
 import qrcode.image.svg
 
+from app.api.funding.service import FundingService
 from app.api.payment.model import TopUp
 from app.api.payment.repository import InvoiceRepository, PaymentRepository
 from app.shared.schema import MAX_MONEY
@@ -49,7 +50,8 @@ class PaymentService:
 
     def create(self, payload, key):
         self.ctx.owner_only()
-        self.ctx.raw_pocket(payload.pocket_id)
+        ensure(payload.pocket_id is None, "Top-up baru harus masuk ke Main Fund Account, lalu alokasikan ke pocket.", 422)
+        FundingService(self.ctx).account()
 
         row = self.repo.by_key(self.ctx.owner_id, key)
 
@@ -87,6 +89,17 @@ class PaymentService:
         if row.status == "COMPLETED":
             return self.view(row)
 
+        if row.pocket_id is None:
+            funding = FundingService(self.ctx)
+            account = funding.account()
+            ensure(account.balance + row.amount <= MAX_MONEY, "Saldo utama melebihi batas sistem.", 409)
+            account.balance += row.amount
+            row.status = "COMPLETED"
+            row.completed_at = now_utc()
+            funding.record(account, "TOP_UP", row.amount, key=row.idempotency_key)
+            return self.ctx.commit(self.view(row))
+
+        # Pending top-ups created before this migration retain their destination.
         pocket = self.ctx.raw_pocket(row.pocket_id)
 
         ensure(

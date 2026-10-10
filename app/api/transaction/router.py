@@ -29,11 +29,17 @@ def transaction_response(data):
 
 @router.post("", dependencies=[Depends(require_pin_verification(ActionType.PAYMENT))])
 def create_transaction(payload: TransactionCreate, ctx: Ctx, key: Key):
+    if payload.request_id:
+        ctx.employee_only()
     data = TransactionService(ctx).execute(
         payload.card_id,
         payload.amount,
         payload.description,
         key,
+        category=payload.category,
+        request_id=payload.request_id,
+        payment_method=payload.payment_method,
+        recipient_account=payload.recipient_account,
     )
     return transaction_response(data)
 

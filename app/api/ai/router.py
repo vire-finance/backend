@@ -38,6 +38,7 @@ def owner_insights(ctx: Ctx, period: str | None = Query(None, max_length=32),
 
 @router.post("/owner/insights/generate", response_model=OwnerInsightsResponse)
 def generate_owner_insights(ctx: Ctx, period: str | None = Query(None, max_length=32),
-                            start_date: date | None = None, end_date: date | None = None):
+                            start_date: date | None = None, end_date: date | None = None,
+                            force: bool = False):
     """Explicit inference generation; matching evidence reuses a short-lived cache."""
-    return OwnerInsightService(ctx).get(period, start_date, end_date, generate=True)
+    return OwnerInsightService(ctx).get(period, start_date, end_date, generate=True, force=force)

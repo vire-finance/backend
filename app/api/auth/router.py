@@ -1,5 +1,4 @@
 import hashlib
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -11,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.api.auth.dependencies import bearer_scheme, get_current_user
 from app.api.auth.model import AuthSession, User
+from app.api.auth.invitation import issue_invitation_code, stored_invitation_code
 from app.api.auth.schema import (
-    EmployeeSetupRequest, InviteResponse, LoginRequest, OwnerSetupRequest,
+    EmployeeSetupRequest, GoogleLoginRequest, InviteResponse, LoginRequest, OwnerSetupRequest,
     RegisterRequest, RegistrationResponse, TokenResponse, UserResponse,
 )
 from app.api.auth.security import (
@@ -115,10 +115,8 @@ def select_owner_role(payload: OwnerSetupRequest, user: User = Depends(get_curre
     user.role = UserRole.OWNER
     user.fund_account_type = payload.fund_account_type.strip().upper()
     user.employees_managed = payload.employees_managed
-    code = secrets.token_urlsafe(18)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    user.invite_code_hash = hashlib.sha256(code.encode()).hexdigest()
-    user.invite_code_expires_at = expires_at
+    code = issue_invitation_code(user)
+    expires_at = user.invite_code_expires_at
     db.commit()
     return InviteResponse(code=code, expires_at=expires_at.isoformat())
 
@@ -211,14 +209,39 @@ def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/invite-code")
+def get_invite_code(user: User = Depends(get_current_user)):
+    if user.role != UserRole.OWNER:
+        raise HTTPException(status_code=403, detail="Hanya owner yang dapat melihat invitation code.")
+    expires_at = user.invite_code_expires_at
+    return {
+        "code": stored_invitation_code(user),
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "expired": not expires_at or expires_at <= datetime.now(timezone.utc),
+    }
+
+
 @router.post("/invite-code/regenerate", response_model=InviteResponse)
 def regenerate_invite_code(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role != UserRole.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hanya owner yang dapat membuat invitation code.")
     user = db.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
-    code = secrets.token_urlsafe(18)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    user.invite_code_hash = hashlib.sha256(code.encode()).hexdigest()
-    user.invite_code_expires_at = expires_at
+    code = issue_invitation_code(user)
+    expires_at = user.invite_code_expires_at
     db.commit()
     return InviteResponse(code=code, expires_at=expires_at.isoformat())
+
+
+@router.get('/google/config')
+def google_config():
+    from app.core.config import settings
+    return {'enabled': bool(settings.GOOGLE_CLIENT_ID.strip()),
+            'client_id': settings.GOOGLE_CLIENT_ID.strip()}
+
+
+@router.post('/google', response_model=TokenResponse)
+def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+    from app.api.auth.google import google_user, verify_google_token
+    claims = verify_google_token(payload.id_token.get_secret_value())
+    user = google_user(db, claims)
+    return _issue_token(db, user)

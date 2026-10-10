@@ -72,3 +72,8 @@ class UserResponse(BaseModel):
 class InviteResponse(BaseModel):
     code: str
     expires_at: str
+
+
+class GoogleLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id_token: SecretStr = Field(min_length=20, max_length=10000)

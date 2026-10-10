@@ -38,8 +38,12 @@ class InsightCache:
         with self.lock:
             return self._get(key)
 
-    def claim(self, key):
+    def claim(self, key, *, force=False):
         with self.lock:
+            if force:
+                if key in self.inflight:
+                    return AIAnalysis(fallback_reason="LLM_GENERATION_IN_PROGRESS"), False
+                self.entries.pop(key, None)
             cached = self._get(key)
             if cached is not None:
                 return cached, False
@@ -86,7 +90,7 @@ def financial_evidence(analytics):
     evidence["data_availability"] = {key: value for key, value in availability.items()
                                      if not key.endswith("_reason") and key != "category_basis"}
     evidence["data_availability"]["note"] = (
-        "No departments or historical budget snapshots; categories are current Card categories."
+        "No departments or historical budget snapshots; " + availability["category_basis"]
     )
     refs = {"summary", "budget", "data_availability"}
     limits = {"pocket_breakdown": 1, "card_breakdown": 3, "category_breakdown": 3, "signals": 1}
@@ -153,13 +157,13 @@ class OwnerInsightService:
     def __init__(self, ctx):
         self.ctx = ctx
 
-    def get(self, period=None, start_date=None, end_date=None, *, generate=False):
+    def get(self, period=None, start_date=None, end_date=None, *, generate=False, force=False):
         analytics = AnalyticsService(self.ctx).analyze(period, start_date, end_date)
         key = cache_key(self.ctx.owner_id, analytics)
         if not generate:
             ai = insight_cache.lookup(key) or AIAnalysis(fallback_reason="NOT_GENERATED")
         else:
-            ai, claimed = insight_cache.claim(key)
+            ai, claimed = insight_cache.claim(key, force=force)
             if claimed:
                 try:
                     evidence = financial_evidence(analytics)

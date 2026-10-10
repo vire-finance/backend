@@ -7,7 +7,7 @@ from app.api.request.model import FundRequest, FundRequestDocument
 from app.api.ocr.model import OCRDocument
 from app.api.transaction.model import Transaction
 from app.api.payment.model import InvoicePayment, TopUp
-from app.api.notification.model import Notification
+from app.api.notification.model import Notification, PushDevice
 
 __all__ = [
     "Base",
@@ -25,3 +25,4 @@ __all__ = [
     "TopUp",
     "Notification",
 ]
+from app.api.funding.model import FundAccount, FundMovement

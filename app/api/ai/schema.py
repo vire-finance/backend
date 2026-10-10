@@ -146,7 +146,7 @@ class DataAvailability(StrictSchema):
     merchant_reason: str = "Party names exist only on fund requests; direct card payments have no merchant field."
     historical_budget_supported: Literal[False] = False
     historical_budget_reason: str = "Budgets, balances and monthly limits store current values, not historical snapshots."
-    category_basis: str = "Current Card.category; past category assignments are not recorded."
+    category_basis: str = "Transaction category at payment time; legacy payments retain their prior card category."
     approved_transactions_missing_processed_at: int
     baseline_transaction_count: int
     baseline_average_transaction_amount: float | None

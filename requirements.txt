@@ -54,3 +54,6 @@ pypdfium2>=4.30,<6
 pytesseract>=0.3.13,<0.4
 qrcode>=8,<9
 tzdata>=2025.1
+
+google-auth>=2.40,<3
+requests>=2.32,<3

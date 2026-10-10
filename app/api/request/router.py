@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.api.request.schema import (
     DocumentAttach, FundRequestInput, RequestApprove,
-    RequestReject, RequestSubmit,
+    RequestReject, RequestSubmit, ReceiptSubmit, ReceiptReview,
 )
 from app.api.request.service import FundRequestService
 from app.api.transaction.router import transaction_response
@@ -82,10 +82,21 @@ def submit(request_id: UUID, payload: RequestSubmit, ctx: Ctx):
 
 @router.post("/fund-requests/{request_id}/approve", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
 def approve(request_id: UUID, payload: RequestApprove, ctx: Ctx, key: Key):
-    return transaction_response(
-        FundRequestService(ctx).approve(request_id, payload, key)
-    )
+    result = FundRequestService(ctx).approve(request_id, payload, key)
+    return transaction_response(result) if "transaction_type" in result else result
 
 @router.post("/fund-requests/{request_id}/reject", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
 def reject(request_id: UUID, payload: RequestReject, ctx: Ctx):
     return FundRequestService(ctx).reject(request_id, payload)
+@router.post("/fund-requests/{request_id}/receipt")
+def submit_receipt(request_id: UUID, payload: ReceiptSubmit, ctx: Ctx):
+    return FundRequestService(ctx).submit_receipt(request_id, payload)
+
+@router.post("/fund-requests/{request_id}/receipt/review", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
+def review_receipt(request_id: UUID, payload: ReceiptReview, ctx: Ctx):
+    return FundRequestService(ctx).review_receipt(request_id, payload)
+
+@router.get("/fund-requests/{request_id}/receipt/file")
+def receipt_file(request_id: UUID, ctx: Ctx):
+    path, mime, filename = FundRequestService(ctx).receipt_file(request_id)
+    return FileResponse(str(path), media_type=mime, filename=filename, content_disposition_type="inline", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})

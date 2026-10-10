@@ -21,6 +21,8 @@ class User(Base, UUIDPrimaryKey, Timestamp):
         nullable=False,
     )
 
+    google_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+
     username: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -73,6 +75,8 @@ class User(Base, UUIDPrimaryKey, Timestamp):
         Integer,
         nullable=True,
     )
+
+    invite_code_seed: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     invite_code_hash: Mapped[str | None] = mapped_column(
         String(64),

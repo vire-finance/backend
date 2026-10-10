@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
+from app.api.funding.service import FundingService
 from app.api.card.model import Card
 from app.api.card.repository import CardRepository
 from app.api.card.service import CardService
@@ -39,7 +40,10 @@ class DashboardService:
         pockets = [p for p in PocketRepository(ctx.db).for_owner(ctx.owner_id) if ctx.can_pocket(p)]
         cards = [c for c in CardRepository(ctx.db).for_owner(ctx.owner_id) if ctx.can_card(c)]
         total = sum(money(p.remaining_amount) for p in pockets)
+        main_account = None
         if ctx.user.role == UserRole.OWNER:
+            main_account = FundingService(ctx).get()
+            total = main_account["balance"] if main_account else 0
             pocket_views = [PocketService(ctx).view(p) for p in pockets]
             card_views = [CardService(ctx).view(c) for c in cards]
         else:
@@ -57,7 +61,7 @@ class DashboardService:
             total += sum(min(value, money(ctx.raw_pocket(key).remaining_amount))
                          for key, value in direct_balances.items())
             pocket_views = [fields(p, "id", "name", "theme", "remaining_amount") for p in pockets]
-            card_views = [{**fields(c, "id", "pocket_id", "name", "category", "theme", "status", "balance", "monthly_limit", "last_four_digits"),
+            card_views = [{**fields(c, "id", "pocket_id", "name", "category", "allowed_categories", "theme", "status", "balance", "monthly_limit", "last_four_digits"),
                            "own_monthly_spent": money(spending.get(c.id, 0)), "is_simulated": True} for c in cards]
         requests = FundRequestService(ctx).list(limit=5)
         result = {"name": ctx.user.full_name or ctx.user.username, "role": ctx.user.role.value,
@@ -71,6 +75,7 @@ class DashboardService:
         if ctx.user.role == UserRole.OWNER:
             from app.api.ai.service import AIService
             result["ai_analysis"] = AIService(ctx).anomalies()
+            result["main_fund_account"] = main_account
         return result
 
     def spending(self, period=None, pocket_id=None):
@@ -82,8 +87,9 @@ class DashboardService:
             Transaction.processed_at >= start, Transaction.processed_at < end)
         if pocket_id:
             statement = statement.where(Transaction.pocket_id == pocket_id)
-        rows = self.ctx.db.execute(statement.with_only_columns(Card.category, func.sum(Transaction.amount))
-                                   .group_by(Card.category)).all()
+        category_column = func.coalesce(Transaction.category, Card.category, "Others")
+        rows = self.ctx.db.execute(statement.with_only_columns(category_column, func.sum(Transaction.amount))
+                                   .group_by(category_column)).all()
         total = sum(money(value) for _, value in rows)
         pockets = PocketRepository(self.ctx.db).for_owner(self.ctx.owner_id)
         monthly_limit = sum(money(p.monthly_limit) for p in pockets if not pocket_id or p.id == pocket_id)

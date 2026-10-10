@@ -1,6 +1,6 @@
 from datetime import timedelta, timezone
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from app.api.card.model import Card
 from app.api.request.model import FundRequest
@@ -39,7 +39,7 @@ class HistoryService:
         if status:
             conditions.append(Transaction.status == status)
         if category:
-            conditions.append(Card.category == category)
+            conditions.append(func.coalesce(Transaction.category, Card.category, "Others") == category)
         if start:
             conditions.append(Transaction.created_at >= start)
         if end:
@@ -66,7 +66,7 @@ class HistoryService:
             group = "This Month"
         else:
             group = day.strftime("%Y-%m")
-        result.update(card_name=card.name, category=card.category or "Uncategorized",
+        result.update(card_name=card.name, category=row.category or card.category or "Others",
             party_name=request.party_name if request else row.description,
             period_group=group, direction="OUTGOING", signed_amount=-money(row.amount),
             balance_effect=-money(row.amount) if row.status == "APPROVED" else 0)

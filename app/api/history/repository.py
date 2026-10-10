@@ -26,7 +26,6 @@ class HistoryRepository:
                 CardAccess.card_id == Card.id,
                 CardAccess.employee_id == user.id).exists()
             statement = statement.where(
-                or_(pocket_access, card_access),
                 or_(and_(Transaction.fund_request_id.is_(None), Transaction.actor_id == user.id),
                     FundRequest.requester_id == user.id))
         return statement

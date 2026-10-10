@@ -1,5 +1,6 @@
 import logging
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,8 @@ from app.api.notification.router import router as notification_router
 from app.api.dashboard.router import router as dashboard_router
 from app.api.history.router import router as history_router
 from app.api.ai.router import router as ai_router
+from app.api.funding.router import router as funding_router
+from app.api.notification.worker import run_worker
 from app.core.config import settings
 from app.api.ai.provider import close_inference_client
 
@@ -29,10 +32,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app):
+    worker = asyncio.create_task(run_worker())
     try:
         yield
     finally:
-        close_inference_client()
+        try:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+        finally:
+            close_inference_client()
 
 
 app = FastAPI(title="VIRE API", version="1.0.0", lifespan=lifespan)
@@ -80,6 +89,7 @@ app.include_router(notification_router)
 app.include_router(dashboard_router)
 app.include_router(history_router)
 app.include_router(ai_router)
+app.include_router(funding_router)
 
 @app.get("/health")
 def health():

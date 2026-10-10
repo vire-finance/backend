@@ -1,11 +1,14 @@
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, Enum, ForeignKey, Numeric, String, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.base import Base, Timestamp, UUIDPrimaryKey
 from app.shared.enums import CardStatus
+from app.api.transaction.schema import ExpenseCategory
+from typing import get_args
 
 
 class Card(Base, UUIDPrimaryKey, Timestamp):
@@ -18,6 +21,7 @@ class Card(Base, UUIDPrimaryKey, Timestamp):
     category: Mapped[str | None] = mapped_column(
         String(100), nullable=True, index=True
     )
+    allowed_categories: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: list(get_args(ExpenseCategory)))
     last_four_digits: Mapped[str] = mapped_column(
         String(4), nullable=False
     )
@@ -38,12 +42,16 @@ class Card(Base, UUIDPrimaryKey, Timestamp):
     status: Mapped[CardStatus] = mapped_column(
         Enum(CardStatus), nullable=False, default=CardStatus.ACTIVE
     )
+    expires_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    usage_type: Mapped[str] = mapped_column(String(20), nullable=False, default="LONG_TERM", server_default="LONG_TERM")
+    single_use_consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     theme: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     pocket = relationship("Pocket", back_populates="cards")
     accesses = relationship("CardAccess", back_populates="card", cascade="all, delete-orphan")
 
     __table_args__ = (
+        CheckConstraint("usage_type IN ('SINGLE_USE', 'LONG_TERM', 'SUBSCRIPTION')", name="ck_card_usage_type"),
         CheckConstraint("balance >= 0", name="ck_card_balance_non_negative"),
         CheckConstraint("spent >= 0", name="ck_card_spent_non_negative"),
         CheckConstraint(
