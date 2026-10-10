@@ -3,16 +3,17 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from app.api.auth.dependencies import bearer_scheme
-from app.api.auth.security import decode_access_token
-from sqlalchemy import select
+from app.api.auth.security import decode_access_token, hash_password, verify_password
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, undefer
 
 from app.api.auth.dependencies import get_current_user
-from app.api.auth.model import User
+from app.api.auth.model import User, AuthSession
 from app.api.security.pin import hash_pin, verify_pin
 from app.api.security.schema import (
     BiometricToggleRequest,
     ChangePinRequest,
+    ChangePasswordRequest,
     NotificationPreferencesRequest,
     VerifyPinRequest,
     VerifyPinResponse,
@@ -107,6 +108,24 @@ def change_pin(
     user.pin_locked_until = None
     db.commit()
     return {"message": "Security PIN updated."}
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    user = db.scalar(select(User).where(User.id == current_user.id).with_for_update().execution_options(populate_existing=True))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not verify_password(payload.current_password.get_secret_value(), user.password_hash):
+        raise HTTPException(status_code=400, detail="The current password is incorrect.")
+    user.password_hash = hash_password(payload.new_password.get_secret_value())
+    now = datetime.now(timezone.utc)
+    db.execute(update(AuthSession).where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)).values(revoked_at=now).execution_options(synchronize_session="fetch"))
+    db.commit()
+    return {"message": "Password updated. Please sign in again."}
 
 
 @router.patch("/biometric-toggle")

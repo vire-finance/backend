@@ -3,6 +3,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     DATABASE_URL: str
+    # Web OAuth client ID used to verify the audience of Google ID tokens.
+    FIREBASE_SERVICE_ACCOUNT: str = ""
+    FIREBASE_PROJECT_ID: str = ""
+    GOOGLE_CLIENT_ID: str = ""
     SECRET_KEY: str
 
     TESSERACT_CMD: str = ""
@@ -30,6 +34,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
     ]
 
     model_config = SettingsConfigDict(
