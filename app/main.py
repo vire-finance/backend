@@ -24,28 +24,36 @@ from app.api.history.router import router as history_router
 from app.api.ai.router import router as ai_router
 from app.api.funding.router import router as funding_router
 from app.api.notification.worker import run_worker
+from app.api.ocr.worker import run_ocr_worker
+from app.api.ocr.files import with_storage_file_routes
 from app.core.config import settings
+from app.core.request_guard import LocalRequestGuardMiddleware
 from app.api.ai.provider import close_inference_client
+from app.core.storage import StorageError, validate_production_storage
 
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app):
-    worker = asyncio.create_task(run_worker())
+    await asyncio.to_thread(validate_production_storage)
+    workers = [asyncio.create_task(run_worker()), asyncio.create_task(run_ocr_worker())]
     try:
         yield
     finally:
         try:
-            worker.cancel()
-            with suppress(asyncio.CancelledError):
-                await worker
+            for worker in workers:
+                worker.cancel()
+            for worker in workers:
+                with suppress(asyncio.CancelledError):
+                    await worker
         finally:
             close_inference_client()
 
 
 app = FastAPI(title="VIRE API", version="1.0.0", lifespan=lifespan)
 
+app.add_middleware(LocalRequestGuardMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -82,7 +90,16 @@ app.include_router(card_router)
 app.include_router(profile_router)
 app.include_router(security_router)
 
-app.include_router(request_router)
+@app.exception_handler(StorageError)
+async def storage_error(request: Request, exception: StorageError):
+    logger.warning("Receipt storage error code=%s", exception.code)
+    missing = exception.code in {"missing", "invalid_reference"}
+    return JSONResponse(status_code=404 if missing else 503,
+        content={"detail": "File tidak tersedia." if missing else "Receipt storage is temporarily unavailable."},
+        headers={"Retry-After": "5"} if exception.retryable else None)
+
+
+app.include_router(with_storage_file_routes(request_router))
 app.include_router(transaction_router)
 app.include_router(payment_router)
 app.include_router(notification_router)

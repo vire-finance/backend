@@ -36,12 +36,17 @@ class AIService:
                 flags.append("OCR_AMOUNT_MISMATCH")
             evidence.append({"ocr_status": doc.ocr_status.value,
                 "amount": str(doc.extracted_total_amount) if doc.extracted_total_amount is not None else None,
-                "merchant": doc.extracted_other_party_name, "date": str(doc.extracted_date) if doc.extracted_date else None,
-                "text": (doc.raw_ocr_text or "")[:2000]})
-        context = {"amount_idr": money(row.total_amount), "party_name": row.party_name,
-            "explanation": row.explanation[:5000], "request_type": row.request_type.value,
+                "amount_matches_request": (doc.extracted_total_amount == row.total_amount
+                                            if doc.extracted_total_amount is not None else None),
+                "merchant_detected": bool(doc.extracted_other_party_name),
+                "date_detected": doc.extracted_date is not None})
+        # Inference receives rule/amount evidence, never raw receipts, merchant
+        # names, account details, or the employee's free-text explanation.
+        context = {"amount_idr": money(row.total_amount), "party_name_provided": bool(row.party_name),
+            "explanation_provided": bool(row.explanation.strip()), "request_type": row.request_type.value,
             "historical_average_idr": str(average) if average is not None else None,
-            "matching_request_count": duplicates, "rule_flags": sorted(set(flags)), "documents": evidence}
+            "matching_request_count": duplicates, "rule_flags": sorted(set(flags)),
+            "document_count": len(documents), "documents": evidence}
         summary, fallback = narrative(context)
         heuristic = FundRequestService(self.ctx).analysis(row)
         if not documents:

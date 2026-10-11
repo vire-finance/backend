@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.core.config import settings
+from app.core.database_options import database_engine_options
 from app.shared.base import Base
 
 from app.api.auth import model as auth_model
@@ -68,10 +69,12 @@ def run_migrations_online() -> None:
 
     """
     config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
+    engine_options = database_engine_options(settings.DATABASE_URL, settings.APP_ENV)
+    engine_options["poolclass"] = pool.NullPool
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+        **engine_options,
     )
 
     with connectable.connect() as connection:

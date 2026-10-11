@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 
 from PIL import Image
 import pypdfium2 as pdfium
@@ -26,13 +27,14 @@ def configure_tesseract() -> None:
 def run_ocr_on_image(
     image: Image.Image,
     lang: str = "ind+eng",
+    deadline: float | None = None,
 ) -> str:
     if image.width * image.height > settings.OCR_MAX_IMAGE_PIXELS:
         raise OCRProcessingError("Image dimensions exceed the OCR limit.")
     configure_tesseract()
 
     try:
-        return pytesseract.image_to_string(image, lang=lang, timeout=settings.OCR_TIMEOUT_SECONDS)
+        return pytesseract.image_to_string(image, lang=lang, timeout=_remaining_timeout(deadline))
 
     except pytesseract.TesseractNotFoundError as e:
         logger.error(
@@ -65,7 +67,7 @@ def run_ocr_on_image(
                 return pytesseract.image_to_string(
                     image,
                     lang="eng",
-                    timeout=settings.OCR_TIMEOUT_SECONDS,
+                    timeout=_remaining_timeout(deadline),
                 )
 
             except Exception as fallback_err:
@@ -93,11 +95,19 @@ def run_ocr_on_image(
         ) from e
 
 
+def _remaining_timeout(deadline: float | None) -> float:
+    remaining = settings.OCR_TIMEOUT_SECONDS if deadline is None else deadline - time.monotonic()
+    if remaining <= 0:
+        raise OCRProcessingError("OCR job exceeded its time limit.")
+    return min(settings.OCR_TIMEOUT_SECONDS, remaining)
+
+
 def run_ocr(
     file_path: str,
     mime_type: str,
     lang: str = "ind+eng",
 ) -> str:
+    deadline = time.monotonic() + settings.OCR_JOB_TIMEOUT_SECONDS
     if not os.path.exists(file_path):
         raise OCRProcessingError(
             "Document file not found for processing."
@@ -122,7 +132,7 @@ def run_ocr(
                         try:
                             pil_image = bitmap.to_pil()
                             try:
-                                page_text = run_ocr_on_image(pil_image, lang=lang)
+                                page_text = run_ocr_on_image(pil_image, lang=lang, deadline=deadline)
                             finally:
                                 pil_image.close()
                         finally:
@@ -151,6 +161,7 @@ def run_ocr(
             return run_ocr_on_image(
                 image,
                 lang=lang,
+                deadline=deadline,
             )
 
     except OCRProcessingError:

@@ -2,11 +2,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.database_options import database_engine_options
 
 engine = create_engine(
     settings.DATABASE_URL,
-    pool_pre_ping=True,
-    isolation_level="READ COMMITTED",
+    **database_engine_options(settings.DATABASE_URL, settings.APP_ENV),
 )
 
 if engine.dialect.name != "postgresql":

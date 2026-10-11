@@ -40,6 +40,7 @@ def create_transaction(payload: TransactionCreate, ctx: Ctx, key: Key):
         request_id=payload.request_id,
         payment_method=payload.payment_method,
         recipient_account=payload.recipient_account,
+        destination=payload.destination,
     )
     return transaction_response(data)
 

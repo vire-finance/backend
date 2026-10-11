@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
-import re
 from threading import Lock
 import time
 
 from app.api.ai.analytics import AnalyticsService
+from app.api.ai.grounding import qualitative_text_error
 from app.api.ai.provider import ProviderError, get_provider
 from app.api.ai.schema import AIAnalysis, FinancialNarrative, OwnerInsightsResponse
 from app.core.config import settings
@@ -72,7 +72,8 @@ def cache_key(owner_id, analytics):
     data["budget"].pop("as_of")
     # Changing model/provider/auth configuration also invalidates cached results.
     config = {name: getattr(settings, name) for name in
-              ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_ENDPOINT", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT", "LLM_THINKING")}
+              ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_ENDPOINT", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT", "LLM_THINKING",
+               "LLM_MAX_OUTPUT_TOKENS", "LLM_NUM_THREADS", "LLM_KEEP_ALIVE")}
     digest = hashlib.sha256(json.dumps({"metrics": data, "config": config}, sort_keys=True,
                                       ensure_ascii=False, allow_nan=False).encode()).hexdigest()
     return str(owner_id), digest
@@ -141,15 +142,12 @@ def validated_narrative(value, evidence):
         expected = max((s["severity"] for s in cited), key=levels.get, default="info")
         if insight.severity.value != expected:
             raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
-        # Current rules never prescribe numerical reduction targets. Reject such
-        # recommendations rather than silently laundering them into trusted cards.
-        if re.search(r"\d|[%\uff05]", insight.recommended_action):
-            raise ProviderError("LLM_UNSUPPORTED_EVIDENCE")
     texts = [narrative.headline, narrative.summary]
     texts.extend(text for item in narrative.insights for text in
                  (item.title, item.description, item.recommended_action))
-    if any("<think" in text.lower() or "</think" in text.lower() for text in texts):
-        raise ProviderError("LLM_INVALID_OUTPUT")
+    error = qualitative_text_error(texts)
+    if error:
+        raise ProviderError(error)
     return narrative
 
 

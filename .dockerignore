@@ -1,0 +1,57 @@
+# Runtime secrets, including files Render places in the context root.
+**/.env
+**/.env.*
+**/secrets
+**/credentials
+**/*service-account*.json
+**/*service_account*.json
+**/*firebase-admin*.json
+**/*firebase_admin*.json
+**/*credential*.json
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/.aws
+**/.azure
+**/.gcloud
+**/.ssh
+
+# Version control and local tooling.
+**/.git
+**/.gitignore
+**/.agents
+**/.codex
+**/.vscode
+**/.idea
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
+
+# Python environments, caches, reports and generated files.
+**/venv
+**/.venv
+**/env
+**/.python-runtime
+**/.setup-temp
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage*
+**/htmlcov
+**/*.egg-info
+**/build
+**/dist
+**/*.log
+
+# Local receipts and private documentation/testing assets.
+**/uploads
+**/ocr_pyc_backup
+docs
+README.md
+postman
+postman_collection.json
+tests
+frontend

@@ -17,6 +17,7 @@ from app.api.transaction.model import Transaction
 from app.api.transaction.repository import TransactionRepository
 from app.shared.enums import CardStatus, FundRequestStatus, TransactionType, UserRole
 from app.shared.utils import ensure, fields, local_time, now_utc
+from app.shared.payment_destination import PaymentDestination
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,17 @@ class TransactionService:
                 "fund_request_id", "actor_id", "amount",
                 "transaction_type", "status", "description", "category",
                 "failure_reason", "created_at", "processed_at", "payment_method", "recipient_account",
+                "payment_type", "destination_name", "destination_account_number", "destination_bank_name",
             ),
             "is_simulated": True,
         }
 
-    def execute(self, card_id, amount, description, key, request_id=None, category=None, payment_method="QRIS", recipient_account=None):
+    def execute(self, card_id, amount, description, key, request_id=None, category=None, payment_method="QRIS", recipient_account=None, destination: PaymentDestination | None = None):
         ctx = self.ctx
+        if destination is not None:
+            destination = PaymentDestination.model_validate(destination.model_dump())
+            ensure(payment_method == destination.payment_method and recipient_account == destination.recipient_account,
+                   "Structured destination conflicts with payment details.", 422)
         card = ctx.card(card_id)
 
         if payment_method in ("BANK_TRANSFER", "E_WALLET"):
@@ -84,6 +90,7 @@ class TransactionService:
                     "description": description,
                     "type": kind.value,
                     **({"category": category} if category is not None else {}),
+                    **({"destination": destination.model_dump()} if destination is not None else {}),
                 },
                 sort_keys=True,
             ).encode()
@@ -111,6 +118,7 @@ class TransactionService:
                     amount=amount,
                     payment_method=payment_method,
                     recipient_account=recipient_account,
+                    **(destination.model_dump() if destination is not None else {}),
                     transaction_type=kind,
                     status="PENDING",
                     description=description,
