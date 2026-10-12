@@ -191,89 +191,45 @@ def parse_amount_str(raw: str) -> Decimal | None:
 
 
 def extract_total_amount(text: str) -> Decimal | None:
-    if not text:
-        return None
+    """Select a labelled total, never the largest/last currency amount.
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    priority_re = re.compile(
-        r"(?:grand\s+total|total\s+bayar|total\s+tagihan|total\s+akhir|\btotal\b|jumlah\s+total)",
-        re.IGNORECASE,
-    )
-
-    amount_re = re.compile(
-        r"(?:rp\.?|idr)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
-        re.IGNORECASE,
-    )
-
+    OCR may insert spaces around a thousands separator. Preserve those digits;
+    conflicting totals at the same priority require manual correction.
+    """
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    labels = re.compile(
+        r"(?P<final>grand\s+total|total\s+(?:bayar|tagihan|akhir)|jumlah\s+total)"
+        r"|(?P<total>\btotal\b)|(?P<other>\b(?:jumlah|tagihan|netto|amount\s+due)\b)", re.I)
+    excluded = re.compile(r"\b(?:sub\s*total|tax|pajak|ppn|kembali\w*|change|tunai|cash|bayar|payment|diskon|discount)\b", re.I)
+    amount_pattern = r"(?:rp\.?|idr)?\s*(?:[0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)"
+    amount_re = re.compile(amount_pattern, re.I)
+    candidates = []
     for index, line in enumerate(lines):
-        if not priority_re.search(line):
+        match = labels.search(line)
+        if not match or excluded.search(line[:match.start()]):
             continue
-
-        current_line = priority_re.sub("", line, count=1)
-
-        matches = list(amount_re.finditer(current_line))
-
-        for match in reversed(matches):
-            amount = parse_amount_str(match.group(0))
-
-            if amount is not None and amount > 0:
-                return amount
-
-        if index + 1 < len(lines):
-            matches = list(amount_re.finditer(lines[index + 1]))
-
-            for match in reversed(matches):
-                amount = parse_amount_str(match.group(0))
-
-                if amount is not None and amount > 0:
-                    return amount
-
-    secondary_re = re.compile(
-        r"(?:jumlah|tagihan|subtotal|amount|netto)",
-        re.IGNORECASE,
-    )
-
-    for index, line in enumerate(lines):
-        if not secondary_re.search(line):
+        if re.search(r"\bsub\s*total\b", line[:match.end()], re.I):
             continue
-
-        current_line = secondary_re.sub("", line, count=1)
-
-        matches = list(amount_re.finditer(current_line))
-
-        for match in reversed(matches):
-            amount = parse_amount_str(match.group(0))
-
-            if amount is not None and amount > 0:
-                return amount
-
-        if index + 1 < len(lines):
-            matches = list(amount_re.finditer(lines[index + 1]))
-
-            for match in reversed(matches):
-                amount = parse_amount_str(match.group(0))
-
-                if amount is not None and amount > 0:
-                    return amount
-
-    rp_re = re.compile(
-        r"(?:rp\.?|idr)\s*([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)",
-        re.IGNORECASE,
-    )
-
-    all_rp_amounts = []
-
-    for match in rp_re.finditer(text):
-        amount = parse_amount_str(match.group(0))
-
+        tail = line[match.end():]
+        # 'Total items/qty' is a count, not a financial total.
+        if re.match(r"\s*(?:items?|qty|barang|produk)\b", tail, re.I):
+            continue
+        tail = excluded.split(tail, maxsplit=1)[0].strip(" :\t=")
+        if not tail and index + 1 < len(lines):
+            tail = lines[index + 1]
+        tail = re.sub(r"(?<=\d)\s*([.,])\s*(?=\d)", r"\1", tail)
+        # Full-line evidence avoids returning the trailing 900 in '33 900'.
+        if not amount_re.fullmatch(tail):
+            continue
+        amount = parse_amount_str(tail)
         if amount is not None and amount > 0:
-            all_rp_amounts.append(amount)
-
-    if all_rp_amounts:
-        return all_rp_amounts[-1]
-
-    return None
+            rank = 3 if match.lastgroup == "final" else 2 if match.lastgroup == "total" else 1
+            candidates.append((rank, amount))
+    if not candidates:
+        return None
+    rank = max(item[0] for item in candidates)
+    totals = {amount for priority, amount in candidates if priority == rank}
+    return totals.pop() if len(totals) == 1 else None
 
 
 def extract_date(text: str) -> date | None:

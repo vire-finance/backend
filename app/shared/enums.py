@@ -18,6 +18,7 @@ class OCRStatus(str, Enum):
     NONACTIVE = "NONACTIVE"
 
 class FundRequestStatus(str, Enum):
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
     DRAFT = "DRAFT"
     PENDING_APPROVAL = "PENDING_APPROVAL"
     APPROVED = "APPROVED"

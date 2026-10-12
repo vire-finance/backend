@@ -15,3 +15,15 @@ def test_force_refresh_replaces_cache_and_coalesces_concurrent_requests():
     cache.store(key, AIAnalysis(available=True, summary='new'), 300)
     cache.release(key)
     assert cache.lookup(key).summary == 'new'
+
+
+def test_polling_distinguishes_running_generation_from_not_generated():
+    cache = InsightCache()
+    key = ('owner', 'metrics')
+    assert cache.lookup(key) is None
+    assert cache.claim(key) == (None, True)
+    pending = cache.lookup(key)
+    assert not pending.available and pending.fallback_reason == 'LLM_GENERATION_IN_PROGRESS'
+    assert cache.lookup(('other-owner', 'metrics')) is None
+    cache.release(key)
+    assert cache.lookup(key) is None

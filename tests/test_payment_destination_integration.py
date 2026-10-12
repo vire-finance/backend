@@ -195,7 +195,8 @@ def test_additive_revision_and_offline_ddl():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["c6d7e8f9a0b1"]
+    assert len(scripts.get_heads()) == 1
+    assert "c6d7e8f9a0b1" in {revision.revision for revision in scripts.walk_revisions()}
     assert scripts.get_revision("c6d7e8f9a0b1").down_revision == "b5c6d7e8f9a0"
     output = io.StringIO()
     context = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": output})

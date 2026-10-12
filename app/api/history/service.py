@@ -1,4 +1,6 @@
 from datetime import timedelta, timezone
+import csv
+import io
 
 from sqlalchemy import or_, func
 
@@ -83,3 +85,19 @@ class HistoryService:
         row = self.ctx.db.scalar(self.repo.query().where(Transaction.id == transaction_id))
         ensure(row is not None, "Transaction not found.", 404)
         return self.view(row)
+
+    def export(self, **filters):
+        """All matching, authorized records; pagination limits do not truncate exports."""
+        statement = self.filtered(**filters).order_by(Transaction.created_at.desc(), Transaction.id)
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow(['transaction_id', 'created_at_utc', 'card_name', 'category',
+                         'description', 'amount_idr', 'status'])
+        def safe(value):
+            value = '' if value is None else str(value)
+            return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
+        for row in self.ctx.db.scalars(statement.execution_options(yield_per=500)):
+            card = self.ctx.raw_card(row.card_id)
+            writer.writerow([row.id, row.created_at.isoformat(), safe(card.name),
+                safe(row.category or card.category or 'Others'), safe(row.description), money(row.amount), row.status])
+        return output.getvalue().encode('utf-8-sig')

@@ -3,7 +3,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 
-from sqlalchemy import String, Numeric, ForeignKey, Enum, Text, DateTime, Boolean, CheckConstraint
+from sqlalchemy import String, Numeric, ForeignKey, Enum, Text, DateTime, Boolean, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from app.shared.base import Base, UUIDPrimaryKey, Timestamp
@@ -57,3 +57,15 @@ class FundRequestDocument(Base, UUIDPrimaryKey, Timestamp):
     ocr_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     ocr_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     fund_request: Mapped["FundRequest"] = relationship("FundRequest", back_populates="documents")
+
+
+class RequestEvent(Base, UUIDPrimaryKey, Timestamp):
+    """Append-only review conversation. Existing requests need no backfill."""
+    __tablename__ = "request_events"
+    request_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fund_requests.id"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    event_type: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40))
+    message: Mapped[str | None] = mapped_column(Text)
+    action_key: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    __table_args__ = (UniqueConstraint("request_id", "action_key", name="uq_request_event_key"),)

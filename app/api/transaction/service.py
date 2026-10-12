@@ -45,7 +45,7 @@ class TransactionService:
             "is_simulated": True,
         }
 
-    def execute(self, card_id, amount, description, key, request_id=None, category=None, payment_method="QRIS", recipient_account=None, destination: PaymentDestination | None = None):
+    def execute(self, card_id, amount, description, key, request_id=None, category=None, payment_method="QRIS", recipient_account=None, destination: PaymentDestination | None = None, approval_message=None):
         ctx = self.ctx
         if destination is not None:
             destination = PaymentDestination.model_validate(destination.model_dump())
@@ -61,6 +61,7 @@ class TransactionService:
             owner_payment = request.payment_executor == "OWNER_PAYMENT"
             if owner_payment:
                 ctx.owner_only()
+                ensure(request.requester_id != ctx.user.id, "Tidak dapat approve Request sendiri.", 403)
                 from app.api.request.repository import FundRequestRepository
                 ensure(bool(FundRequestRepository(ctx.db).documents(request.id)), "Invoice wajib tersedia.", 409)
             else:
@@ -91,6 +92,7 @@ class TransactionService:
                     "type": kind.value,
                     **({"category": category} if category is not None else {}),
                     **({"destination": destination.model_dump()} if destination is not None else {}),
+                    **({"approval_message": approval_message} if approval_message is not None else {}),
                 },
                 sort_keys=True,
             ).encode()
@@ -154,6 +156,7 @@ class TransactionService:
                     request = ctx.request(request_id)
 
                     owner_payment = request.payment_executor == "OWNER_PAYMENT"
+                    require(not owner_payment or request.requester_id != ctx.user.id, "Tidak dapat approve Request sendiri.")
                     require((owner_payment and ctx.user.role == UserRole.OWNER) or (not owner_payment and request.requester_id == ctx.user.id), "Pelaksana pembayaran tidak sesuai request.")
                     require(
                         request.status == (FundRequestStatus.PENDING_APPROVAL if owner_payment else FundRequestStatus.APPROVED) and request.paid_at is None,
@@ -166,6 +169,15 @@ class TransactionService:
                     )
 
                     requester = ctx.db.get(User, request.requester_id)
+                    require(not owner_payment or (requester is not None
+                        and requester.role == UserRole.EMPLOYEE and requester.employer_id == ctx.owner_id),
+                        "Requester bukan employee dalam business ini.")
+                    require(request.card_id in (None, card.id)
+                        and request.category == row.category
+                        and request.explanation[:255] == row.description
+                        and request.payment_method == row.payment_method
+                        and request.recipient_account == row.recipient_account,
+                        "Detail request berubah. Tinjau kembali sebelum membayar.")
                     require(
                         requester is not None
                         and ctx.can_card(card, requester),
@@ -263,6 +275,9 @@ class TransactionService:
                         request.status = FundRequestStatus.COMPLETED
                         request.receipt_status = "INVOICE_PAID"
                         request.completed_at = now
+                        from app.api.request.model import RequestEvent
+                        ctx.db.add(RequestEvent(request_id=request.id, actor_id=ctx.user.id,
+                            event_type="APPROVED", status=request.status.value, message=approval_message))
                         NotificationService(ctx).enqueue(request.requester_id, request.id, "Invoice paid", "Owner menyetujui dan membayar invoice. Request selesai.")
                     else:
                         request.receipt_due_at = now + timedelta(hours=48)

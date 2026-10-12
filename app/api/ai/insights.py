@@ -36,7 +36,12 @@ class InsightCache:
 
     def lookup(self, key):
         with self.lock:
-            return self._get(key)
+            cached = self._get(key)
+            if cached is not None:
+                return cached
+            if key in self.inflight:
+                return AIAnalysis(fallback_reason="LLM_GENERATION_IN_PROGRESS")
+            return None
 
     def claim(self, key, *, force=False):
         with self.lock:

@@ -225,7 +225,8 @@ def test_file_storage_failure_returns_safe_json_before_headers(ctx, attached_rec
     app.dependency_overrides[get_context] = lambda: ctx
     with TestClient(app) as client:
         result = client.get(f"/fund-requests/{row.id}/documents/{doc.id}/file")
-    assert result.status_code == status and set(result.json()) == {"detail"}
+    assert result.status_code == status and set(result.json()) == {"detail", "code"}
+    assert result.json()["code"] == ("FILE_NOT_FOUND" if status == 404 else "STORAGE_UNAVAILABLE")
     assert KEY not in result.text and "supabase://" not in result.text
     if retryable:
         assert result.headers["retry-after"] == "5"

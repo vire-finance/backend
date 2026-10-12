@@ -38,9 +38,13 @@ class RequestSubmit(Input):
 
 class RequestApprove(Input):
     card_id: UUID
+    message: str | None = Field(None, min_length=1, max_length=1000)
 
 class RequestReject(Input):
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str | None = Field(None, min_length=1, max_length=1000)
+
+class ClarificationMessage(Input):
+    message: str = Field(min_length=1, max_length=5000)
 class ReceiptSubmit(Input):
     document_id: UUID
     note: str = Field(default="", max_length=5000)

@@ -159,7 +159,11 @@ def test_push_outbox_retries_without_blocking_purchase(ctx, settings_card, monke
     from app.core.config import settings
     from google.oauth2 import service_account
     import requests
-    ctx.db.add(PushDevice(user_id=ctx.user.id,token='fake-device-token-123456789'))
+    from app.api.auth.router import _issue_token
+    from app.api.auth.security import decode_access_token
+    tokens = _issue_token(ctx.db, ctx.user)
+    sid = uuid.UUID(decode_access_token(tokens.access_token)['sid'])
+    ctx.db.add(PushDevice(user_id=ctx.user.id,token='fake-device-token-123456789',session_id=sid))
     event=Notification(user_id=ctx.user.id,title='Purchase request',message='Review invoice')
     ctx.db.add(event);ctx.db.commit()
     class Credentials:

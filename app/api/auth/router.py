@@ -146,9 +146,15 @@ def select_employee_role(payload: EmployeeSetupRequest, user: User = Depends(get
         role=user.role.value if user.role else None,
     )
 
-def _issue_token(db: Session, user: User) -> TokenResponse:
+def _issue_token(db: Session, user: User, rotating_session_id=None) -> TokenResponse:
     session = AuthSession(user_id=user.id, expires_at=datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS))
     db.add(session)
+    if rotating_session_id is not None:
+        from sqlalchemy import update
+        from app.api.notification.model import PushDevice
+        db.flush()
+        db.execute(update(PushDevice).where(PushDevice.user_id == user.id,
+            PushDevice.session_id == rotating_session_id).values(session_id=session.id))
     db.commit()
     db.refresh(session)
     role = user.role.value if user.role else "PENDING"
@@ -190,7 +196,7 @@ def refresh(
     if not session or not user or session.user_id != user.id or session.revoked_at or session.expires_at <= now:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
     session.revoked_at = now
-    return _issue_token(db, user)
+    return _issue_token(db, user, rotating_session_id=session.id)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

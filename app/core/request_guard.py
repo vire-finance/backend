@@ -107,7 +107,7 @@ class LocalRequestGuardMiddleware:
             return
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "").rstrip("/") or "/"
-        upload = method == "POST" and path == "/ocr/documents"
+        upload = method == "POST" and path in {"/ocr/documents", "/api/v1/profile/photo"}
         costly_ai = ((method == "POST" and path == "/ai/owner/insights/generate") or
                      (method == "GET" and path.startswith("/ai/fund-requests/") and path.endswith("/analysis")))
         lane = "upload" if upload else "ai" if costly_ai else "auth" if method == "POST" and path in self.AUTH_PATHS else None
@@ -116,7 +116,8 @@ class LocalRequestGuardMiddleware:
             try:
                 claims = self._claims(scope)
                 role = "EMPLOYEE" if upload else "OWNER"
-                if claims.get("role") != role:
+                allowed_roles = {"OWNER", "EMPLOYEE"} if path == "/api/v1/profile/photo" else {role}
+                if claims.get("role") not in allowed_roles:
                     detail = ("Only employee accounts can access OCR document scanning." if upload
                               else "Hanya Owner yang diizinkan.")
                     raise HTTPException(403, detail)

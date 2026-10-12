@@ -26,3 +26,4 @@ __all__ = [
     "Notification",
 ]
 from app.api.funding.model import FundAccount, FundMovement
+from app.api.profile.model import ProfilePhoto

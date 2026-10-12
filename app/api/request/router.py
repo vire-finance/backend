@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.api.request.schema import (
     DocumentAttach, FundRequestInput, RequestApprove,
-    RequestReject, RequestSubmit, ReceiptSubmit, ReceiptReview,
+    RequestReject, RequestSubmit, ReceiptSubmit, ReceiptReview, ClarificationMessage,
 )
 from app.api.request.service import FundRequestService
 from app.api.transaction.router import transaction_response
@@ -88,6 +88,15 @@ def approve(request_id: UUID, payload: RequestApprove, ctx: Ctx, key: Key):
 @router.post("/fund-requests/{request_id}/reject", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
 def reject(request_id: UUID, payload: RequestReject, ctx: Ctx):
     return FundRequestService(ctx).reject(request_id, payload)
+
+@router.post("/fund-requests/{request_id}/clarification", dependencies=[Depends(require_pin_verification(ActionType.APPROVAL, owner_only=True))])
+def clarify(request_id: UUID, payload: ClarificationMessage, ctx: Ctx, key: Key):
+    return FundRequestService(ctx).clarify(request_id, payload, key)
+
+@router.post("/fund-requests/{request_id}/clarification/reply")
+def clarification_reply(request_id: UUID, payload: ClarificationMessage, ctx: Ctx, key: Key):
+    return FundRequestService(ctx).reply(request_id, payload, key)
+
 @router.post("/fund-requests/{request_id}/receipt")
 def submit_receipt(request_id: UUID, payload: ReceiptSubmit, ctx: Ctx):
     return FundRequestService(ctx).submit_receipt(request_id, payload)

@@ -21,3 +21,11 @@ class PushDevice(Base, UUIDPrimaryKey, Timestamp):
     __tablename__ = "push_devices"
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     token: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("auth_sessions.id", ondelete="CASCADE"), index=True)
+
+
+class PushDelivery(Base):
+    """Successful device delivery checkpoint for partial-batch retries."""
+    __tablename__ = "push_deliveries"
+    notification_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("finance_notifications.id", ondelete="CASCADE"), primary_key=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("push_devices.id", ondelete="CASCADE"), primary_key=True)

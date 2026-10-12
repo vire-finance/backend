@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import AwareDatetime
 
 from app.api.history.service import HistoryService
@@ -23,6 +23,14 @@ def history_filters(
 @router.get("/history")
 def history(ctx: Ctx, filters: Annotated[dict, Depends(history_filters)]):
     return HistoryService(ctx).list(**filters)
+
+
+@router.get("/history/export.csv")
+def export_history(ctx: Ctx, filters: Annotated[dict, Depends(history_filters)]):
+    filters = {key: value for key, value in filters.items() if key not in {"offset", "limit"}}
+    return Response(HistoryService(ctx).export(**filters), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="vire-transactions.csv"',
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/history/{transaction_id}")
