@@ -135,3 +135,8 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+# GitHub Pages frontend origin must be allowed in production, including when Render supplies CORS_ORIGINS.
+if settings.APP_ENV == "production" and "https://vire-finance.github.io" not in settings.CORS_ORIGINS:
+    settings.CORS_ORIGINS.append("https://vire-finance.github.io")
